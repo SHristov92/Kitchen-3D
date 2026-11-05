@@ -27,7 +27,6 @@ export class View3D {
     this.needsRender = true;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
@@ -108,6 +107,11 @@ export class View3D {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     if (!w || !h) return;
+    // Big desktop screens at 2x would mean 8+ million pixels per frame; cap the
+    // drawing size so a large window costs about as much as a laptop screen.
+    const MAX_PIXELS = 2.4e6;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_PIXELS / (w * h)));
+    this.renderer.setPixelRatio(Math.max(dpr, 0.75));
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
