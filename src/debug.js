@@ -17,6 +17,8 @@ export function startDebugOverlay({ view, editor }) {
   const ext = gl.getExtension('WEBGL_debug_renderer_info');
   const gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
   const stats = {};
+  let lost = 0;
+  view.canvas.addEventListener('webglcontextlost', () => { lost++; });
   timeMethod(view, 'rebuild', stats, 'rebuild3d');
   timeMethod(view.renderer, 'render', stats, 'render3d');
   timeMethod(editor, 'draw', stats, 'draw2d');
@@ -27,6 +29,13 @@ export function startDebugOverlay({ view, editor }) {
     }).observe({ type: 'longtask', buffered: true });
   } catch { /* not supported */ }
 
+  // Would the browser give us a GPU context if we refused a software one?
+  let caveat = 'n/a';
+  try {
+    const t = document.createElement('canvas').getContext('webgl2', { failIfMajorPerformanceCaveat: true });
+    caveat = t ? 'hardware context OK' : 'refused (software only for this page)';
+    t?.getExtension('WEBGL_lose_context')?.loseContext();
+  } catch { /* ignore */ }
   const box = document.createElement('pre');
   box.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:9999;margin:0;padding:8px 10px;'
     + 'background:rgba(0,0,0,.78);color:#e8ffe8;font:11px/1.45 ui-monospace,monospace;border-radius:6px;'
@@ -49,6 +58,7 @@ export function startDebugOverlay({ view, editor }) {
       `3D canvas: ${c.width}x${c.height}   renders/s: ${rate('render3d')}   last render: ${ms('render3d')} ms`,
       `3D draw calls: ${info.render.calls}   triangles: ${info.render.triangles}   shaders: ${info.programs.length}`,
       `3D rebuild: ${ms('rebuild3d')} ms (${rate('rebuild3d')}/s)   2D draw: ${ms('draw2d')} ms (${rate('draw2d')}/s)`,
+      `GPU context lost: ${lost}x   failIfMajorPerformanceCaveat test: ${caveat}`,
       `long tasks: ${longTasks} (${(longMs / 1000).toFixed(1)} s total)`,
       `browser: ${navigator.userAgent}`,
     ].join('\n');
