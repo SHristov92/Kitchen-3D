@@ -64,6 +64,9 @@ async function boot() {
   const editor = new Editor2D($('plan'), store);
   const view = new View3D($('view3d'), store);
   window.kitchen = { store, editor, view }; // handy for debugging in the console
+  if (view.softwareGL) {
+    setTimeout(() => toast('Your browser is drawing 3D without the graphics card, so it will be slow. Turn on hardware acceleration in the browser settings.'), 1500);
+  }
   if (new URLSearchParams(location.search).has('debug')) {
     import('./debug.js').then((m) => m.startDebugOverlay({ view, editor }));
   }

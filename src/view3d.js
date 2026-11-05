@@ -26,12 +26,15 @@ export class View3D {
     this.itemCache = new Map(); // item id -> { key, group }, reused while the item is unchanged
     this.needsRender = true;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Without a usable graphics card the browser draws WebGL on the CPU, which is very
+    // slow; use a cheaper look there (no antialiasing or shadows, fewer pixels).
+    this.softwareGL = isSoftwareGL();
+    this.renderer = new THREE.WebGLRenderer({ antialias: !this.softwareGL, powerPreference: 'high-performance' });
     // Reading shader logs forces the browser to wait for every compile; skip it.
     this.renderer.debug.checkShaderErrors = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = !this.softwareGL;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // The lights never move, so the shadow map is only redrawn when the scene changes.
     this.renderer.shadowMap.autoUpdate = false;
@@ -115,9 +118,9 @@ export class View3D {
     if (!w || !h) return;
     // Big desktop screens at 2x would mean 8+ million pixels per frame; cap the
     // drawing size so a large window costs about as much as a laptop screen.
-    const MAX_PIXELS = 2.4e6;
+    const MAX_PIXELS = this.softwareGL ? 0.35e6 : 2.4e6;
     const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_PIXELS / (w * h)));
-    this.renderer.setPixelRatio(Math.max(dpr, 0.75));
+    this.renderer.setPixelRatio(Math.max(dpr, this.softwareGL ? 0.4 : 0.75));
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -441,6 +444,20 @@ function setWallFade(mesh, faded) {
 function disposeGroup(group) {
   group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
   group.clear();
+}
+
+/** True when WebGL runs on a software renderer (GPU disabled or blocklisted). */
+export function isSoftwareGL() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
+    if (!gl) return false;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return /swiftshader|llvmpipe|softpipe|software|basic render/i.test(name);
+  } catch {
+    return false;
+  }
 }
 
 /** Everything an item's 3D model depends on, apart from where it stands. */
