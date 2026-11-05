@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kitchen 3D Planner</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='10' width='26' height='18' rx='2' fill='%232f7cf6'/%3E%3Crect x='3' y='4' width='26' height='5' rx='1' fill='%2390b8fb'/%3E%3C/svg%3E" />
+    <script type="module" crossorigin src="./assets/index-tCzQX8M3.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-B4nBHfw_.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">Kitchen 3D</div>
+      <input id="project-name" class="project-name" aria-label="Project name" />
+      <span id="save-status" class="save-status"></span>
+      <div class="spacer"></div>
+      <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
+      <button id="btn-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+      <span class="sep"></span>
+      <button id="btn-projects">Projects</button>
+      <button id="btn-new">New</button>
+      <button id="btn-import">Import</button>
+      <button id="btn-export">Export</button>
+      <input id="file-input" type="file" accept=".json,application/json" hidden />
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar">
+        <nav class="tabs" role="tablist">
+          <button class="tab active" data-tab="room" role="tab">Room</button>
+          <button class="tab" data-tab="library" role="tab">Library</button>
+        </nav>
+        <div class="tab-body" id="tab-room"></div>
+        <div class="tab-body" id="tab-library" hidden></div>
+        <div class="selection" id="selection" hidden></div>
+      </aside>
+
+      <section class="pane plan-pane">
+        <div class="pane-bar">
+          <span class="pane-title">Plan</span>
+          <div class="spacer"></div>
+          <button id="btn-fit" class="small">Fit to view</button>
+        </div>
+        <canvas id="plan" class="plan-canvas"></canvas>
+      </section>
+
+      <div class="splitter" id="splitter" title="Drag to resize"></div>
+
+      <section class="pane view-pane">
+        <div class="pane-bar">
+          <span class="pane-title">3D view</span>
+          <div class="segmented" role="group" aria-label="Camera mode">
+            <button id="mode-orbit" class="active">Overview</button>
+            <button id="mode-walk">Walk</button>
+          </div>
+          <div class="spacer"></div>
+          <button id="btn-reset-cam" class="small">Reset camera</button>
+        </div>
+        <div id="view3d" class="view3d">
+          <div id="walk-help" class="overlay" hidden>
+            <b>Walk mode</b> · W A S D or arrow keys to move · Q / E to turn · drag to look around · Shift to go faster
+          </div>
+          <div id="orbit-help" class="overlay">
+            Drag to orbit · right-drag to pan · scroll to zoom
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="projects-dialog" class="dialog">
+      <div class="dialog-head">
+        <h2>Your projects</h2>
+        <button class="icon" data-close title="Close">×</button>
+      </div>
+      <p class="muted small">Projects are saved automatically in this browser. Use Export to keep a copy as a file or move it to another computer.</p>
+      <ul id="project-list" class="project-list"></ul>
+    </dialog>
+
+    <div id="toast" class="toast" hidden></div>
+  </body>
+</html>
