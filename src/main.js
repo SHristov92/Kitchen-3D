@@ -8,6 +8,7 @@ import {
 } from './panels.js';
 import { Store } from './store.js';
 import * as storage from './storage.js';
+import { decodeProject, shareTokenFromHash, shareUrl } from './share.js';
 import { View3D } from './view3d.js';
 
 const $ = (id) => document.getElementById(id);
@@ -60,6 +61,19 @@ async function boot() {
   }
   project = project ? normalizeProject(project) : sampleProject();
 
+  // A shared link (#share=...) opens as a new copy; the visitor's own projects stay untouched.
+  let sharedName = null;
+  const token = shareTokenFromHash();
+  if (token) {
+    try {
+      project = await decodeProject(token);
+      sharedName = project.name;
+    } catch (err) {
+      setTimeout(() => toast(`Could not open the shared link. ${err.message}`), 0);
+    }
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+
   const store = new Store(project);
   const editor = new Editor2D($('plan'), store);
   const view = new View3D($('view3d'), store);
@@ -89,6 +103,7 @@ async function boot() {
     }, 500);
   };
   scheduleSave();
+  if (sharedName) toast(`Opened a shared copy of "${sharedName}". It is saved in your projects.`);
 
   // ---------- panels ----------
   const roomTab = $('tab-room');
@@ -182,6 +197,43 @@ async function boot() {
     }
   });
 
+  // ---------- share ----------
+  const shareDialog = $('share-dialog');
+  shareDialog.querySelector('[data-close]').onclick = () => shareDialog.close();
+  shareDialog.addEventListener('click', (e) => { if (e.target === shareDialog) shareDialog.close(); });
+  const shareProject = async (p) => {
+    let url;
+    try {
+      url = await shareUrl(p);
+    } catch (err) {
+      console.error(err);
+      toast('This browser cannot make share links. Use Export to send the project as a file.');
+      return;
+    }
+    $('share-name').textContent = `"${p.name}"`;
+    $('share-url').value = url;
+    $('share-copy').textContent = 'Copy link';
+    $('share-copy').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        $('share-url').select();
+        document.execCommand?.('copy');
+      }
+      $('share-copy').textContent = 'Copied';
+    };
+    const native = $('share-native');
+    native.hidden = !navigator.share;
+    native.onclick = () => navigator.share({ title: `${p.name} · Kitchen 3D`, url }).catch(() => {});
+    if (!shareDialog.open) shareDialog.showModal();
+    $('share-url').focus();
+    $('share-url').select();
+  };
+  $('btn-share').onclick = () => shareProject(store.project);
+  // A share link pasted into the address bar of an open tab only changes the hash.
+  window.addEventListener('hashchange', () => { if (shareTokenFromHash()) location.reload(); });
+  $('share-url').addEventListener('focus', (e) => e.target.select());
+
   // ---------- projects dialog ----------
   const dialog = $('projects-dialog');
   dialog.querySelector('[data-close]').onclick = () => dialog.close();
@@ -208,6 +260,13 @@ async function boot() {
           },
         }, 'Duplicate'),
         h('button', {
+          onclick: async () => {
+            const src = meta.id === store.project.id ? store.project : await storage.getProject(meta.id);
+            dialog.close();
+            shareProject(normalizeProject(src));
+          },
+        }, 'Share'),
+        h('button', {
           class: 'danger',
           onclick: async () => {
             if (!confirm(`Delete "${meta.name}"? This cannot be undone.`)) return;
@@ -228,7 +287,7 @@ async function boot() {
   // ---------- keyboard ----------
   window.addEventListener('keydown', (e) => {
     const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
-    if (typing || dialog.open) return;
+    if (typing || dialog.open || shareDialog.open) return;
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
     if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) store.redo(); else store.undo(); return; }
