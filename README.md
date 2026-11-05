@@ -19,6 +19,10 @@ object library, and walk through it in 3D on the right.
   (`*.kitchen.json`) so a plan can be backed up or moved to another computer.
 - Undo/redo for every edit.
 
+Live version: https://shristov92.github.io/Kitchen-3D/ (built and deployed by
+`.github/workflows/deploy.yml` on every push to `main`; the repo's Pages source must be
+set to **GitHub Actions**).
+
 ## Running it
 
 ```bash
