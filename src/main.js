@@ -64,6 +64,9 @@ async function boot() {
   const editor = new Editor2D($('plan'), store);
   const view = new View3D($('view3d'), store);
   window.kitchen = { store, editor, view }; // handy for debugging in the console
+  if (new URLSearchParams(location.search).has('debug')) {
+    import('./debug.js').then((m) => m.startDebugOverlay({ view, editor }));
+  }
 
   // ---------- autosave ----------
   let saveTimer = null;
