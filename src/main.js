@@ -1,4 +1,5 @@
 import './style.css';
+import { catalogEntry } from './catalog.js';
 import { h } from './dom.js';
 import { Editor2D } from './editor2d.js';
 import { createItem, createProject, normalizeProject, toExportFile, uid } from './model.js';
@@ -132,11 +133,53 @@ async function boot() {
   renderLibraryPanel($('tab-library'), editor);
   refreshPanels('load');
 
-  document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-    $('tab-room').hidden = tab.dataset.tab !== 'room';
-    $('tab-library').hidden = tab.dataset.tab !== 'library';
-  }));
+  const showTab = (name) => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+    $('tab-room').hidden = name !== 'room';
+    $('tab-library').hidden = name !== 'library';
+  };
+  document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
+
+  // ---------- small screens: one view at a time ----------
+  const mobile = window.matchMedia('(max-width: 900px)');
+  const planPane = document.querySelector('.plan-pane');
+  const sidebar = document.querySelector('.sidebar');
+  const setMobileView = (name) => {
+    document.body.dataset.mview = name;
+    document.querySelectorAll('#mobile-nav button').forEach((b) => b.classList.toggle('active', b.dataset.mview === name));
+    if (name === 'library' || name === 'room') showTab(name);
+  };
+  const placeSelection = () => {
+    // On phones the selection panel sits as a sheet over the plan instead of under the sidebar.
+    if (mobile.matches) { if (selRoot.parentElement !== planPane) planPane.append(selRoot); }
+    else if (selRoot.parentElement !== sidebar) sidebar.append(selRoot);
+    selRoot.classList.remove('collapsed');
+  };
+  mobile.addEventListener('change', placeSelection);
+  placeSelection();
+  setMobileView('plan');
+  document.querySelectorAll('#mobile-nav button').forEach((b) => b.addEventListener('click', () => setMobileView(b.dataset.mview)));
+  selRoot.addEventListener('click', (e) => {
+    if (mobile.matches && e.target.closest('.sel-header') && !e.target.closest('button')) selRoot.classList.toggle('collapsed');
+  });
+  store.subscribe((reason) => { if (reason === 'select') selRoot.classList.remove('collapsed'); });
+  editor.onItemAdded = (item) => {
+    if (!mobile.matches || document.body.dataset.mview === 'plan') return;
+    setMobileView('plan');
+    toast(`Added ${catalogEntry(item.type)?.name || 'object'}. Drag it into place.`);
+  };
+
+  // Topbar menu (Projects, New, Import, Export) folds into ☰ on phones.
+  const topbar = document.querySelector('.topbar');
+  const menuBtn = $('btn-menu');
+  const closeMenu = () => { topbar.classList.remove('menu-open'); menuBtn.setAttribute('aria-expanded', 'false'); };
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = topbar.classList.toggle('menu-open');
+    menuBtn.setAttribute('aria-expanded', String(open));
+  });
+  $('topbar-menu').addEventListener('click', (e) => { if (e.target.closest('button')) closeMenu(); });
+  document.addEventListener('pointerdown', (e) => { if (!topbar.contains(e.target)) closeMenu(); });
 
   $('project-name').addEventListener('change', (e) => {
     const name = e.target.value.trim() || 'Untitled kitchen';

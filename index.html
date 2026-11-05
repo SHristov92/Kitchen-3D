@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Kitchen 3D Planner</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='10' width='26' height='18' rx='2' fill='%232f7cf6'/%3E%3Crect x='3' y='4' width='26' height='5' rx='1' fill='%2390b8fb'/%3E%3C/svg%3E" />
     <script>
@@ -19,14 +19,17 @@
       <input id="project-name" class="project-name" aria-label="Project name" />
       <span id="save-status" class="save-status"></span>
       <div class="spacer"></div>
-      <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
-      <button id="btn-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+      <button id="btn-undo" title="Undo (Ctrl+Z)" aria-label="Undo"><span class="ico" aria-hidden="true">↶</span><span class="lbl">Undo</span></button>
+      <button id="btn-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><span class="ico" aria-hidden="true">↷</span><span class="lbl">Redo</span></button>
       <span class="sep"></span>
-      <button id="btn-projects">Projects</button>
-      <button id="btn-new">New</button>
-      <button id="btn-import">Import</button>
-      <button id="btn-export">Export</button>
-      <button id="btn-share" title="Get a link that opens a copy of this project">Share</button>
+      <button id="btn-menu" class="menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="topbar-menu">☰</button>
+      <div class="topbar-menu" id="topbar-menu">
+        <button id="btn-projects">Projects</button>
+        <button id="btn-new">New</button>
+        <button id="btn-import">Import</button>
+        <button id="btn-export">Export</button>
+        <button id="btn-share" title="Get a link that opens a copy of this project">Share</button>
+      </div>
       <input id="file-input" type="file" accept=".json,application/json" hidden />
     </header>
 
@@ -64,14 +67,24 @@
         </div>
         <div id="view3d" class="view3d">
           <div id="walk-help" class="overlay" hidden>
-            <b>Walk mode</b> · W A S D or arrow keys to move · Q / E to turn · drag to look around · Shift to go faster
+            <span class="desk-only"><b>Walk mode</b> · W A S D or arrow keys to move · Q / E to turn · drag to look around · Shift to go faster</span>
+            <span class="touch-only">Left stick to move · drag anywhere else to look around</span>
           </div>
+          <div id="joystick" class="joystick" hidden><div class="joystick-knob"></div></div>
           <div id="orbit-help" class="overlay">
-            Drag to orbit · right-drag to pan · scroll to zoom
+            <span class="desk-only">Drag to orbit · right-drag to pan · scroll to zoom</span>
+            <span class="touch-only">Drag to orbit · two fingers to pan and zoom</span>
           </div>
         </div>
       </section>
     </main>
+
+    <nav class="mobile-nav" id="mobile-nav" aria-label="Views">
+      <button data-mview="plan" class="active"><span aria-hidden="true">▦</span>Plan</button>
+      <button data-mview="view"><span aria-hidden="true">◈</span>3D</button>
+      <button data-mview="library"><span aria-hidden="true">＋</span>Library</button>
+      <button data-mview="room"><span aria-hidden="true">⬠</span>Room</button>
+    </nav>
 
     <dialog id="projects-dialog" class="dialog">
       <div class="dialog-head">

@@ -21,6 +21,8 @@ export class View3D {
     this.store = store;
     this.mode = 'orbit';
     this.keys = new Set();
+    this.joy = { x: 0, y: 0 }; // on-screen stick, -1..1 on each axis
+    this.touchSeen = window.matchMedia?.('(pointer: coarse)').matches ?? false;
     this.pitch = -0.08;
     this.materials = new Map();
     this.itemCache = new Map(); // item id -> { key, group }, reused while the item is unchanged
@@ -109,7 +111,16 @@ export class View3D {
       this.canvas.focus();
     }
     for (const w of this.walls) setWallFade(w, false);
+    this.updateJoystick();
     this.invalidate(true);
+  }
+
+  updateJoystick() {
+    const el = this.container.querySelector('#joystick');
+    if (!el) return;
+    const on = this.mode === 'walk' && this.touchSeen;
+    el.hidden = !on;
+    el.classList.toggle('on', on);
   }
 
   resize() {
@@ -291,24 +302,58 @@ export class View3D {
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     window.addEventListener('blur', () => this.keys.clear());
 
+    // On-screen stick for touch screens: push it to walk, like W A S D.
+    const stick = this.container.querySelector('#joystick');
+    if (stick) {
+      const knob = stick.firstElementChild;
+      let id = null;
+      const move = (e) => {
+        const r = stick.getBoundingClientRect();
+        const R = r.width / 2;
+        let x = (e.clientX - r.left - R) / R;
+        let y = (e.clientY - r.top - R) / R;
+        const len = Math.hypot(x, y);
+        if (len > 1) { x /= len; y /= len; }
+        // Small dead zone so resting a thumb on it doesn't creep.
+        this.joy = len < 0.15 ? { x: 0, y: 0 } : { x, y };
+        knob.style.transform = `translate(${x * R * 0.6}px, ${y * R * 0.6}px)`;
+      };
+      const release = (e) => {
+        if (e.pointerId !== id) return;
+        id = null;
+        this.joy = { x: 0, y: 0 };
+        knob.style.transform = '';
+      };
+      stick.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        id = e.pointerId;
+        stick.setPointerCapture(id);
+        move(e);
+      });
+      stick.addEventListener('pointermove', (e) => { if (e.pointerId === id) move(e); });
+      stick.addEventListener('pointerup', release);
+      stick.addEventListener('pointercancel', release);
+    }
+
     // Drag to look around (works without pointer lock, also on touch).
     let last = null;
     this.canvas.addEventListener('pointerdown', (e) => {
-      if (this.mode !== 'walk') return;
+      if (e.pointerType === 'touch' && !this.touchSeen) { this.touchSeen = true; this.updateJoystick(); }
+      if (this.mode !== 'walk' || last) return;
       this.canvas.focus();
-      last = { x: e.clientX, y: e.clientY };
+      last = { x: e.clientX, y: e.clientY, id: e.pointerId };
       this.canvas.setPointerCapture(e.pointerId);
     });
     this.canvas.addEventListener('pointermove', (e) => {
-      if (this.mode !== 'walk' || !last) return;
+      if (this.mode !== 'walk' || !last || e.pointerId !== last.id) return;
       const dx = e.clientX - last.x;
       const dy = e.clientY - last.y;
-      last = { x: e.clientX, y: e.clientY };
+      last = { x: e.clientX, y: e.clientY, id: e.pointerId };
       this.store.setViewer({ heading: this.project.viewer.heading + dx * 0.25 });
       this.pitch = THREE.MathUtils.clamp(this.pitch - dy * 0.004, -1.3, 1.3);
       this.invalidate();
     });
-    const end = () => { last = null; };
+    const end = (e) => { if (last && e.pointerId === last.id) last = null; };
     this.canvas.addEventListener('pointerup', end);
     this.canvas.addEventListener('pointercancel', end);
   }
@@ -332,8 +377,8 @@ export class View3D {
     let heading = v.heading;
     const turn = (k.has('arrowleft') || k.has('q') ? -1 : 0) + (k.has('arrowright') || k.has('e') ? 1 : 0);
     heading += turn * 90 * dt;
-    const fwd = (k.has('w') || k.has('arrowup') ? 1 : 0) - (k.has('s') || k.has('arrowdown') ? 1 : 0);
-    const side = (k.has('d') ? 1 : 0) - (k.has('a') ? 1 : 0);
+    const fwd = (k.has('w') || k.has('arrowup') ? 1 : 0) - (k.has('s') || k.has('arrowdown') ? 1 : 0) - this.joy.y;
+    const side = (k.has('d') ? 1 : 0) - (k.has('a') ? 1 : 0) + this.joy.x;
     let { x, y } = v;
     if (fwd || side) {
       const speed = (k.has('shift') ? 280 : 140) * dt; // cm per second
@@ -341,8 +386,9 @@ export class View3D {
       const f = { x: Math.sin(h), y: -Math.cos(h) };
       const r = { x: Math.cos(h), y: Math.sin(h) };
       const len = Math.hypot(fwd, side);
-      const dx = ((f.x * fwd + r.x * side) / len) * speed;
-      const dy = ((f.y * fwd + r.y * side) / len) * speed;
+      const mag = Math.min(1, len); // the stick can walk slowly; keys always go full speed
+      const dx = ((f.x * fwd + r.x * side) / len) * speed * mag;
+      const dy = ((f.y * fwd + r.y * side) / len) * speed * mag;
       const free = !this.canStand({ x, y }); // let the walker leave a spot that is already blocked
       if (free || this.canStand({ x: x + dx, y: y + dy })) { x += dx; y += dy; }
       else if (this.canStand({ x: x + dx, y })) x += dx;

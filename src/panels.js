@@ -70,10 +70,10 @@ export function renderRoomPanel(root, store, editor) {
       h('h3', {}, 'Editing the plan'),
       h('ul', {},
         h('li', {}, 'Drag a corner to move it, drag a wall to push it in or out.'),
-        h('li', {}, 'Double-click a wall to add a corner, double-click a corner to remove it.'),
+        h('li', {}, 'Double-click (or double-tap) a wall to add a corner, double-click a corner to remove it.'),
         h('li', {}, 'Click a wall or corner to type exact sizes.'),
         h('li', {}, 'Drag the orange dot to move where you stand in walk mode.'),
-        h('li', {}, 'Scroll to zoom, drag empty space to pan. Hold Alt to turn snapping off.'),
+        h('li', {}, 'Scroll or pinch to zoom, drag empty space to pan. Hold Alt to turn snapping off.'),
       ),
     ),
   );
@@ -120,7 +120,7 @@ export function renderLibraryPanel(root, editor) {
   };
   search.addEventListener('input', draw);
   root.replaceChildren(
-    h('p', { class: 'muted small' }, 'Click an object to add it to the plan, or drag it to a spot. Objects near a wall snap against it and line up with their neighbours. Doors and windows snap into the wall.'),
+    h('p', { class: 'muted small' }, 'Click or tap an object to add it to the plan, or drag it to a spot. Objects near a wall snap against it and line up with their neighbours. Doors and windows snap into the wall.'),
     search, chips, list, renderAdSlot(),
   );
   drawChips();

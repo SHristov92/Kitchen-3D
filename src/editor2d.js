@@ -7,6 +7,7 @@ import { snapItemToWalls } from './snapping.js';
 
 const GRID_SNAP = 5; // cm
 const HIT_PX = 9;
+const HIT_PX_TOUCH = 20; // fingers are less precise than a mouse
 
 export const DRAG_MIME = 'application/x-kitchen-item';
 
@@ -20,6 +21,11 @@ export class Editor2D {
     this.drag = null;
     this.hover = null;
     this.needsFit = true;
+    this.touch = false; // last pointer was a finger: use bigger hit areas
+    this.pointers = new Map(); // active pointers, for pinch zoom
+    this.pinch = null;
+    this.lastTap = null;
+    this.onItemAdded = null;
 
     new ResizeObserver(() => this.resize()).observe(canvas);
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -45,6 +51,7 @@ export class Editor2D {
 
   resize() {
     const r = this.canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return; // hidden (e.g. another view is shown on a phone); keep the last view
     const dpr = window.devicePixelRatio || 1;
     this.width = r.width;
     this.height = r.height;
@@ -90,10 +97,10 @@ export class Editor2D {
   // ---------- hit testing ----------
 
   hitTest(world) {
-    const tol = HIT_PX / this.view.scale;
+    const tol = (this.touch ? HIT_PX_TOUCH : HIT_PX) / this.view.scale;
     const p = this.project;
     const v = p.viewer;
-    if (dist(world, v) < Math.max(tol, 22)) return { kind: 'viewer' };
+    if (dist(world, v) < Math.max(tol, this.touch ? 30 : 22)) return { kind: 'viewer' };
     const pts = p.room.points;
     for (let i = 0; i < pts.length; i++) {
       if (dist(world, pts[i]) < tol) return { kind: 'vertex', index: i };
@@ -116,7 +123,22 @@ export class Editor2D {
 
   onDown(e) {
     this.canvas.setPointerCapture(e.pointerId);
+    this.touch = e.pointerType === 'touch' || e.pointerType === 'pen';
     const { sx, sy, world } = this.eventPos(e);
+    this.pointers.set(e.pointerId, { sx, sy });
+    if (this.pointers.size === 2) {
+      // Second finger: switch from whatever the first finger was doing to pinch zoom + pan.
+      this.drag = null;
+      this.startPinch();
+      return;
+    }
+    if (this.pointers.size > 2) return;
+    this.downAt = { sx, sy };
+    if (this.touch && this.isDoubleTap(sx, sy)) {
+      this.drag = null;
+      this.onDoubleClick(e);
+      return;
+    }
     if (e.button === 1 || e.button === 2) {
       this.drag = { kind: 'pan', sx, sy, ox: this.view.ox, oy: this.view.oy };
       return;
@@ -153,11 +175,42 @@ export class Editor2D {
     }
   }
 
+  startPinch() {
+    const [a, b] = [...this.pointers.values()];
+    const mid = { x: (a.sx + b.sx) / 2, y: (a.sy + b.sy) / 2 };
+    this.pinch = { dist: Math.max(1, Math.hypot(a.sx - b.sx, a.sy - b.sy)), world: this.toWorld(mid.x, mid.y), scale: this.view.scale };
+  }
+
+  isDoubleTap(sx, sy) {
+    const now = performance.now();
+    const t = this.lastTap;
+    this.lastTap = { sx, sy, time: now };
+    if (t && now - t.time < 350 && Math.hypot(sx - t.sx, sy - t.sy) < 24) {
+      this.lastTap = null;
+      return true;
+    }
+    return false;
+  }
+
   onMove(e) {
     const { sx, sy, world } = this.eventPos(e);
+    if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { sx, sy });
+    if (this.pinch) {
+      if (this.pointers.size < 2) return;
+      const [a, b] = [...this.pointers.values()];
+      const mid = { x: (a.sx + b.sx) / 2, y: (a.sy + b.sy) / 2 };
+      const scale = this.pinch.scale * Math.hypot(a.sx - b.sx, a.sy - b.sy) / this.pinch.dist;
+      this.view.scale = Math.max(0.05, Math.min(scale, 10));
+      // Keep the point that was under the fingers under their midpoint (zoom + pan at once).
+      this.view.ox = mid.x - this.pinch.world.x * this.view.scale;
+      this.view.oy = mid.y - this.pinch.world.y * this.view.scale;
+      this.requestDraw();
+      return;
+    }
     const d = this.drag;
     const free = e.altKey;
     if (!d) {
+      if (e.pointerType === 'touch') return;
       const hit = this.hitTest(world);
       this.canvas.style.cursor = !hit ? 'grab'
         : hit.kind === 'vertex' ? 'move'
@@ -165,6 +218,9 @@ export class Editor2D {
         : 'pointer';
       return;
     }
+    // A finger always wobbles a little on a tap; don't let that nudge what was just selected.
+    if (this.touch && !d.moved && d.kind !== 'pan' && Math.hypot(sx - this.downAt.sx, sy - this.downAt.sy) < 6) return;
+    d.moved = true;
     const pts = this.project.room.points;
     if (d.kind === 'pan') {
       this.view.ox = d.ox + (sx - d.sx);
@@ -209,6 +265,13 @@ export class Editor2D {
 
   onUp(e) {
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
+    this.pointers.delete(e.pointerId);
+    if (this.pinch) {
+      // Lifting one finger of a pinch ends it; the other finger does nothing until lifted too.
+      if (this.pointers.size < 2) this.pinch = null;
+      this.drag = null;
+      return;
+    }
     this.drag = null;
   }
 
@@ -279,6 +342,7 @@ export class Editor2D {
     if (s) Object.assign(item, s);
     this.store.change((proj) => { proj.items.push(item); });
     this.store.select({ kind: 'item', id: item.id });
+    this.onItemAdded?.(item);
     return item;
   }
 
