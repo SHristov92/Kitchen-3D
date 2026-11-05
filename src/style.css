@@ -176,7 +176,23 @@ h4 { font-size: 13px; margin: 14px 0 6px; }
   border-radius: 2px;
 }
 .lib-icon.style-stool::before { border-radius: 50%; border-bottom-width: 1px; }
-.lib-icon.style-wall::before, .lib-icon.style-hood::before, .lib-icon.style-shelf::before { border-style: dashed; }
+.lib-icon.raised::before { border-style: dashed; }
+.lib-icon.opening::before { height: 6px; border-bottom-width: 1px; background: repeating-linear-gradient(90deg, var(--c) 0 6px, transparent 6px 8px); }
+.lib-icon.style-roundtable::before, .lib-icon.style-canister::before { border-radius: 50%; border-bottom-width: 1px; }
+.lib-chips { display: flex; gap: 6px; margin: 6px 0 8px; }
+.chip { font-size: 12px; padding: 3px 10px; border-radius: 999px; }
+.chip.active { border-color: var(--accent); background: var(--accent-soft); }
+.lib-cat { border-top: 1px solid var(--border); padding: 4px 0; }
+.lib-cat > summary {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; padding: 6px 2px; font-weight: 600; font-size: 13px; list-style: none;
+}
+.lib-cat > summary::-webkit-details-marker { display: none; }
+.lib-cat > summary::before { content: '▸'; margin-right: 6px; color: var(--muted); transition: transform 0.15s; }
+.lib-cat[open] > summary::before { transform: rotate(90deg); }
+.lib-cat > summary > span:first-child { flex: 1; }
+.lib-count { font-size: 11px; font-weight: 400; color: var(--muted); }
+.lib-cat .lib-grid { padding-bottom: 6px; }
 .lib-name { font-size: 12px; line-height: 1.2; }
 .lib-size { font-size: 11px; color: var(--muted); }
 

@@ -1,4 +1,4 @@
-import { CATALOG, CATEGORIES, catalogEntry } from './catalog.js';
+import { CATALOG, CATEGORIES, catalogEntry, matchesSearch } from './catalog.js';
 import { h, numberField, fmt } from './dom.js';
 import { DRAG_MIME, formatLen } from './editor2d.js';
 import { area, dist, perimeter } from './geometry.js';
@@ -78,32 +78,59 @@ export function renderRoomPanel(root, store, editor) {
   );
 }
 
-/** The object library tab: search, categories, click or drag to add. */
+/** The object library tab: search, brand filter, collapsible categories, click or drag to add. */
 export function renderLibraryPanel(root, editor) {
-  const search = h('input', { type: 'search', placeholder: 'Search objects…', class: 'search' });
+  const search = h('input', { type: 'search', placeholder: 'Search, e.g. "METOD 60" or "drawers"', class: 'search' });
   const list = h('div', { class: 'library' });
+  const SOURCES = [['all', 'All'], ['ikea', 'IKEA'], ['basic', 'Basic']];
+  let source = load('k3d.lib.source', 'all');
+  const open = new Set(JSON.parse(load('k3d.lib.open', '["opening","base"]')));
+  const chips = h('div', { class: 'lib-chips', role: 'radiogroup', 'aria-label': 'Brand' });
+  const drawChips = () => chips.replaceChildren(...SOURCES.map(([id, label]) => h('button', {
+    class: `chip${source === id ? ' active' : ''}`, role: 'radio', 'aria-checked': String(source === id),
+    onclick: () => { source = id; save('k3d.lib.source', id); drawChips(); draw(); },
+  }, label)));
+
   const draw = () => {
-    const q = search.value.trim().toLowerCase();
+    const words = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const pool = CATALOG.filter((c) => (source === 'all' || (source === 'ikea') === (c.brand === 'IKEA'))
+      && matchesSearch(c, words));
     list.replaceChildren(...CATEGORIES.map((cat) => {
-      const entries = CATALOG.filter((c) => c.category === cat.id && (!q || c.name.toLowerCase().includes(q)));
+      const entries = pool.filter((c) => c.category === cat.id);
       if (!entries.length) return null;
-      return h('div', { class: 'lib-cat' },
-        h('h4', {}, cat.name),
+      const details = h('details', { class: 'lib-cat' },
+        h('summary', {}, h('span', {}, cat.name), h('span', { class: 'lib-count' }, String(entries.length))),
         h('div', { class: 'lib-grid' }, entries.map((c) => h('button', {
           class: 'lib-item', draggable: 'true', title: `${c.name}: ${c.w} × ${c.d} × ${c.h} cm. Click to add or drag onto the plan.`,
           ondragstart: (e) => { e.dataTransfer.setData(DRAG_MIME, c.type); e.dataTransfer.effectAllowed = 'copy'; },
           onclick: () => editor.addItem(c.type),
         }, libIcon(c), h('span', { class: 'lib-name' }, c.name), h('span', { class: 'lib-size' }, `${c.w}×${c.d}×${c.h}`)))),
       );
+      // While searching, show every match; otherwise remember which groups are open.
+      details.open = words.length > 0 || open.has(cat.id);
+      details.addEventListener('toggle', () => {
+        if (words.length) return;
+        if (details.open) open.add(cat.id); else open.delete(cat.id);
+        save('k3d.lib.open', JSON.stringify([...open]));
+      });
+      return details;
     }).filter(Boolean));
     if (!list.children.length) list.append(h('p', { class: 'muted' }, 'No objects match your search.'));
   };
   search.addEventListener('input', draw);
   root.replaceChildren(
-    h('p', { class: 'muted small' }, 'Click an object to add it to the plan, or drag it to a spot. Objects near a wall snap against it and line up with their neighbours.'),
-    search, list,
+    h('p', { class: 'muted small' }, 'Click an object to add it to the plan, or drag it to a spot. Objects near a wall snap against it and line up with their neighbours. Doors and windows snap into the wall.'),
+    search, chips, list,
   );
+  drawChips();
   draw();
+}
+
+function load(key, fallback) {
+  try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+function save(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
 }
 
 /** Properties of the selected wall, corner or object. */
@@ -211,7 +238,7 @@ export function duplicateSelected(store) {
   const r = (it.rotation * Math.PI) / 180;
   copy.x = it.x + Math.cos(r) * it.w;
   copy.y = it.y + Math.sin(r) * it.w;
-  const s = snapItemToWalls(copy, store.project.room.points, store.project.items);
+  const s = snapItemToWalls(copy, store.project.room.points, store.project.items, 25, store.project.room.wallThickness);
   if (s) Object.assign(copy, s);
   store.change((pr) => { pr.items.push(copy); });
   store.select({ kind: 'item', id: copy.id });
@@ -250,7 +277,7 @@ function presetIcon(key) {
 }
 
 function libIcon(c) {
-  const el = h('span', { class: `lib-icon style-${c.style}` });
+  const el = h('span', { class: `lib-icon style-${c.style}${(c.elevation ?? 0) >= 100 ? ' raised' : ''}${c.opening ? ' opening' : ''}` });
   const ratio = c.d / c.w;
   el.style.setProperty('--w', `${Math.min(28, 28 / Math.max(ratio, 1))}px`);
   el.style.setProperty('--d', `${Math.min(28, 28 * ratio)}px`);

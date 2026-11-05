@@ -165,3 +165,38 @@ export function pointInItem(item, p, margin = 0) {
   const l = toItemLocal(item, p);
   return Math.abs(l.x) <= item.w / 2 + margin && Math.abs(l.y) <= item.d / 2 + margin;
 }
+
+/**
+ * Find which wall each door/window item sits in. Returns, per wall index, a sorted list of
+ * { from, to, bottom, top } in cm (along the wall's inner edge, and above the floor).
+ */
+export function wallOpenings(points, items, isOpening) {
+  const result = points.map(() => []);
+  for (const it of items) {
+    if (!isOpening(it)) continue;
+    let best = null;
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      const len = dist(a, b);
+      if (len < 1) continue;
+      const dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
+      const n = inwardNormal(points, i);
+      const rel = { x: it.x - a.x, y: it.y - a.y };
+      const along = rel.x * dir.x + rel.y * dir.y;
+      const off = rel.x * n.x + rel.y * n.y;
+      if (along < 0 || along > len) continue;
+      // Must be in or right next to the wall, and turned to face along its normal.
+      const facing = Math.abs(Math.sin(((it.rotation * Math.PI) / 180) - Math.atan2(-n.x, n.y)));
+      if (off > it.d || off < -it.d * 2 - 30 || facing > 0.1) continue;
+      const score = Math.abs(off);
+      if (!best || score < best.score) best = { i, along, len, score };
+    }
+    if (!best) continue;
+    const from = Math.max(1, best.along - it.w / 2);
+    const to = Math.min(best.len - 1, best.along + it.w / 2);
+    if (to - from > 1) result[best.i].push({ from, to, bottom: it.elevation, top: it.elevation + it.h });
+  }
+  for (const list of result) list.sort((p, q) => p.from - q.from);
+  return result;
+}

@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { catalogEntry } from './catalog.js';
 import {
-  bounds, centroid, inwardNormal, offsetPolygon, pointInItem, pointInPolygon, projectOnSegment,
+  bounds, centroid, inwardNormal, offsetPolygon, pointInItem, pointInPolygon, projectOnSegment, wallOpenings,
 } from './geometry.js';
 
 const M = 0.01; // plan centimetres -> scene metres
@@ -139,12 +140,10 @@ export class View3D {
     this.walls = [];
     const wallMat = new THREE.MeshStandardMaterial({ color: room.wallColor, roughness: 0.9 });
     this.trackDisposable(wallMat);
+    const openings = wallOpenings(pts, items, (it) => catalogEntry(it.type)?.opening);
     for (let i = 0; i < pts.length; i++) {
       const j = (i + 1) % pts.length;
-      const quad = [pts[i], pts[j], outer[j], outer[i]];
-      const shape = new THREE.Shape(quad.map((p) => new THREE.Vector2(p.x * M, -p.y * M)));
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: H, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2);
+      const geo = wallGeometry(pts[i], pts[j], outer[i], outer[j], H, openings[i]);
       const mesh = new THREE.Mesh(geo, wallMat.clone());
       this.trackDisposable(mesh.material);
       mesh.castShadow = true;
@@ -165,10 +164,22 @@ export class View3D {
       const b = pts[(i + 1) % pts.length];
       const len = Math.hypot(b.x - a.x, b.y - a.y) * M;
       const n = inwardNormal(pts, i);
-      const sk = new THREE.Mesh(new THREE.BoxGeometry(len, 0.08, 0.012), skirtMat);
-      sk.position.set(((a.x + b.x) / 2 + n.x * 0.6) * M, 0.04, ((a.y + b.y) / 2 + n.y * 0.6) * M);
-      sk.rotation.y = -Math.atan2(b.y - a.y, b.x - a.x);
-      this.roomGroup.add(sk);
+      const dir = { x: (b.x - a.x) / (len / M), y: (b.y - a.y) / (len / M) };
+      // Skip the parts of the wall where a door reaches the floor.
+      let start = 0;
+      const pieces = [];
+      for (const o of openings[i].filter((op) => op.bottom < 8)) {
+        if (o.from > start) pieces.push([start, o.from]);
+        start = Math.max(start, o.to);
+      }
+      if (start < len / M) pieces.push([start, len / M]);
+      for (const [s0, s1] of pieces) {
+        const mid = (s0 + s1) / 2;
+        const sk = new THREE.Mesh(new THREE.BoxGeometry((s1 - s0) * M, 0.08, 0.012), skirtMat);
+        sk.position.set((a.x + dir.x * mid + n.x * 0.6) * M, 0.04, (a.y + dir.y * mid + n.y * 0.6) * M);
+        sk.rotation.y = -Math.atan2(b.y - a.y, b.x - a.x);
+        this.roomGroup.add(sk);
+      }
     }
 
     // Objects
@@ -321,6 +332,50 @@ export class View3D {
   }
 }
 
+/**
+ * One wall as a prism between the inner edge a-b and the mitred outer edge oa-ob,
+ * with rectangular holes for doors and windows. Openings are { from, to, bottom, top }
+ * in cm along the inner edge and above the floor.
+ */
+function wallGeometry(a, b, oa, ob, H, openings = []) {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
+  // Outer edge points perpendicular to an inner point (valid away from the corners).
+  const thick = Math.abs((oa.x - a.x) * -dir.y + (oa.y - a.y) * dir.x) || 0;
+  const out = { x: -dir.y, y: dir.x };
+  const sign = Math.sign((oa.x - a.x) * out.x + (oa.y - a.y) * out.y) || 1;
+  const at = (t) => ({ x: a.x + dir.x * t, y: a.y + dir.y * t });
+  const outAt = (t) => ({ x: a.x + dir.x * t + out.x * thick * sign, y: a.y + dir.y * t + out.y * thick * sign });
+  const prism = (quad, y0, y1) => {
+    const shape = new THREE.Shape(quad.map((p) => new THREE.Vector2(p.x * M, -p.y * M)));
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: y1 - y0, bevelEnabled: false });
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(0, y0, 0);
+    return geo.index ? geo.toNonIndexed() : geo;
+  };
+  if (!openings.length) return prism([a, b, ob, oa], 0, H);
+
+  const parts = [];
+  let start = 0;
+  let first = true;
+  const piece = (t0, t1, y0, y1, isFirst, isLast) => {
+    if (t1 - t0 < 0.1 || y1 - y0 < 0.001) return;
+    const quad = [isFirst ? a : at(t0), isLast ? b : at(t1), isLast ? ob : outAt(t1), isFirst ? oa : outAt(t0)];
+    parts.push(prism(quad, y0, y1));
+  };
+  for (const o of openings) {
+    piece(start, o.from, 0, H, first, false);
+    first = false;
+    piece(o.from, o.to, 0, Math.min(o.bottom * M, H), false, false);
+    piece(o.from, o.to, Math.min(o.top * M, H), H, false, false);
+    start = Math.max(start, o.to);
+  }
+  piece(start, len, 0, H, first, true);
+  const geo = mergeGeometries(parts);
+  parts.forEach((p) => p.dispose());
+  return geo;
+}
+
 function setWallFade(mesh, faded) {
   const m = mesh.material;
   if (m.transparent === faded) return;
@@ -378,103 +433,253 @@ function cyl(view, r, h, color, x, y, z, opts) {
   return m;
 }
 
+const GLASS = { transparent: true, opacity: 0.28, roughness: 0.05, metalness: 0.1 };
+const METAL = { metalness: 0.8, roughness: 0.3 };
+
 /** Doors or drawer fronts on the +z face, split into a grid with small gaps. */
-function fronts(view, g, { w, d, y0, y1, cols = 1, rows = 1, color, handle = 'bar', handleLow = false }) {
+function fronts(view, g, { w, d, y0, y1, cols = 1, rows = 1, color, handle = 'bar', handleLow = false, cx = 0, glass = false, lift = false }) {
   const gap = 0.004;
   const fw = w / cols;
   const fh = (y1 - y0) / rows;
   for (let c = 0; c < cols; c++) {
     for (let r = 0; r < rows; r++) {
-      const x = -w / 2 + fw * (c + 0.5);
+      const x = cx - w / 2 + fw * (c + 0.5);
       const y = y0 + fh * r;
-      g.add(box(view, fw - gap * 2, fh - gap * 2, 0.018, color, x, y + gap, d / 2 + 0.009));
+      if (glass) {
+        // Frame with a glass panel.
+        const t = 0.05;
+        g.add(box(view, fw - gap * 2, t, 0.018, color, x, y + gap, d / 2 + 0.009));
+        g.add(box(view, fw - gap * 2, t, 0.018, color, x, y + fh - gap - t, d / 2 + 0.009));
+        g.add(box(view, t, fh - gap * 2 - 2 * t, 0.018, color, x - fw / 2 + gap + t / 2, y + gap + t, d / 2 + 0.009));
+        g.add(box(view, t, fh - gap * 2 - 2 * t, 0.018, color, x + fw / 2 - gap - t / 2, y + gap + t, d / 2 + 0.009));
+        g.add(box(view, fw - 2 * t, fh - 2 * t, 0.006, '#cfe3e8', x, y + t, d / 2 + 0.006, GLASS));
+      } else {
+        g.add(box(view, fw - gap * 2, fh - gap * 2, 0.018, color, x, y + gap, d / 2 + 0.009));
+      }
       if (handle === 'bar') {
-        const hx = rows > 1 ? x : x + (c % 2 === 0 ? 1 : -1) * (fw / 2 - 0.04);
-        const hy = rows > 1 ? y + fh - 0.05 : handleLow ? y + 0.17 : y + fh - 0.06;
-        const hw = rows > 1 ? Math.min(0.2, fw * 0.5) : 0.012;
-        const hh = rows > 1 ? 0.012 : 0.12;
-        g.add(box(view, hw, hh, 0.02, STEEL, hx, hy - hh, d / 2 + 0.028, { metalness: 0.8, roughness: 0.3 }));
+        const horizontal = rows > 1 || lift;
+        const hx = horizontal ? x : x + (c % 2 === 0 ? 1 : -1) * (fw / 2 - 0.04);
+        const hy = horizontal ? (lift ? y + 0.05 + 0.012 : y + fh - 0.05) : handleLow ? y + 0.17 : y + fh - 0.06;
+        const hw = horizontal ? Math.min(0.2, fw * 0.5) : 0.012;
+        const hh = horizontal ? 0.012 : 0.12;
+        g.add(box(view, hw, hh, 0.02, STEEL, hx, hy - hh, d / 2 + 0.028, METAL));
       }
     }
   }
 }
 
-function baseUnit(view, g, it, { rows = 1, cols, countertop = true, front = true } = {}) {
+function baseUnit(view, g, it, { rows = 1, cols, countertop = true, front = true, drawer = false, top = COUNTER } = {}) {
   const w = it.w * M; const d = it.d * M; const h = it.h * M;
   const plinth = 0.1;
-  const top = countertop ? 0.04 : 0;
+  const tt = countertop ? 0.04 : 0;
   g.add(box(view, w, plinth, d - 0.06, DARK, 0, 0, -0.03));
-  g.add(box(view, w - 0.004, h - plinth - top, d - 0.02, '#e7e3dc', 0, plinth, -0.01));
-  if (front) fronts(view, g, { w, d: d - 0.02, y0: plinth, y1: h - top, rows, cols: cols ?? (w > 0.65 ? 2 : 1), color: it.color });
-  if (countertop) g.add(box(view, w, top, d + 0.02, COUNTER, 0, h - top, 0.01, { roughness: 0.35 }));
+  g.add(box(view, w - 0.004, h - plinth - tt, d - 0.02, '#e7e3dc', 0, plinth, -0.01));
+  const c = cols ?? (w > 0.65 ? 2 : 1);
+  if (front && drawer) {
+    const split = h - tt - 0.16;
+    fronts(view, g, { w, d: d - 0.02, y0: plinth, y1: split, rows: 1, cols: c, color: it.color });
+    fronts(view, g, { w, d: d - 0.02, y0: split, y1: h - tt, rows: 2, cols: c, color: it.color });
+  } else if (front) {
+    fronts(view, g, { w, d: d - 0.02, y0: plinth, y1: h - tt, rows, cols: c, color: it.color });
+  }
+  if (countertop) g.add(box(view, w, tt, d + 0.02, top, 0, h - tt, 0.01, { roughness: 0.35 }));
 }
 
-function sinkBasin(view, g, x, z, bw, bd, topY) {
-  g.add(box(view, bw, 0.012, bd, '#9ea3a8', x, topY - 0.002, z, { metalness: 0.8, roughness: 0.25 }));
+function wallUnit(view, g, it, look = {}) {
+  const w = it.w * M; const d = it.d * M; const h = it.h * M;
+  g.add(box(view, w - 0.004, h, d - 0.02, '#e7e3dc', 0, 0, -0.01));
+  fronts(view, g, {
+    w, d: d - 0.02, y0: 0, y1: h, cols: look.cols ?? (w > 0.65 ? 2 : 1), rows: 1, color: it.color,
+    handleLow: true, glass: look.glass, lift: look.lift,
+  });
+}
+
+/** L-shaped corner unit filling a square footprint: arms along the back (-z) and left (-x). */
+function cornerUnit(view, g, it, armCm, build) {
+  const back = new THREE.Group();
+  build(back, { ...it, d: armCm });
+  back.position.z = (-it.d / 2 + armCm / 2) * M;
+  g.add(back);
+  const side = new THREE.Group();
+  build(side, { ...it, w: it.d - armCm, d: armCm });
+  side.rotation.y = Math.PI / 2;
+  side.position.set((-it.w / 2 + armCm / 2) * M, 0, (armCm / 2) * M);
+  g.add(side);
+}
+
+function sinkBasin(view, g, x, z, bw, bd, topY, color = '#9ea3a8') {
+  const opts = color === '#9ea3a8' || color === '#c9ccd0' ? { metalness: 0.8, roughness: 0.25 } : { roughness: 0.4 };
+  g.add(box(view, bw, 0.012, bd, color, x, topY - 0.002, z, opts));
   g.add(box(view, bw - 0.04, 0.013, bd - 0.04, '#4a4e53', x, topY - 0.002, z, { metalness: 0.6, roughness: 0.4 }));
 }
 
-function faucet(view, g, x, z, topY) {
-  g.add(cyl(view, 0.015, 0.3, STEEL, x, topY, z, { metalness: 0.9, roughness: 0.2 }));
-  g.add(box(view, 0.025, 0.025, 0.18, STEEL, x, topY + 0.28, z + 0.08, { metalness: 0.9, roughness: 0.2 }));
+function faucet(view, g, x, z, topY, color = STEEL, height = 0.3) {
+  g.add(cyl(view, 0.015, height, color, x, topY, z, { metalness: 0.9, roughness: 0.2 }));
+  g.add(box(view, 0.025, 0.025, 0.18, color, x, topY + height - 0.02, z + 0.08, { metalness: 0.9, roughness: 0.2 }));
 }
 
-function hobTop(view, g, w, d, topY, frameless) {
-  const hw = Math.min(w - 0.06, 0.58);
-  const hd = Math.min(d - 0.08, 0.5);
-  g.add(box(view, hw, frameless ? 0.006 : 0.012, hd, '#111214', 0, topY, 0.0, { roughness: 0.15 }));
-  for (const [x, z, r] of [[-0.14, -0.11, 0.09], [0.14, -0.11, 0.07], [-0.14, 0.12, 0.07], [0.14, 0.12, 0.09]]) {
-    const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.85, r, 32), view.material('#6b6e73'));
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(x * (hw / 0.58), topY + 0.013, z * (hd / 0.5));
-    g.add(ring);
+function hobTop(view, g, w, d, topY, frameless, { gas = false, zones = 4, color = '#111214' } = {}) {
+  const hw = Math.min(w - 0.02, 0.9);
+  const hd = Math.min(d - 0.02, 0.52);
+  g.add(box(view, hw, frameless ? 0.006 : 0.012, hd, color, 0, topY, 0.0, gas ? METAL : { roughness: 0.15 }));
+  const spots = zones === 1 ? [[0, 0, 0.1]] : [[-0.14, -0.11, 0.09], [0.14, -0.11, 0.07], [-0.14, 0.12, 0.07], [0.14, 0.12, 0.09]];
+  const sx = zones === 1 ? 1 : Math.min(hw / 0.58, 1.3);
+  const sz = zones === 1 ? 1 : hd / 0.5;
+  for (const [x, z, r] of spots) {
+    if (gas) {
+      g.add(cyl(view, r * 0.55, 0.02, DARK, x * sx, topY + 0.006, z * sz, {}));
+      g.add(box(view, r * 2.2, 0.01, 0.012, DARK, x * sx, topY + 0.026, z * sz));
+      g.add(box(view, 0.012, 0.01, r * 2.2, DARK, x * sx, topY + 0.026, z * sz));
+    } else {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.85, r, 32), view.material('#6b6e73'));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(x * sx, topY + 0.013, z * sz);
+      g.add(ring);
+    }
   }
 }
 
-const BUILDERS = {
-  base: (v, g, it) => baseUnit(v, g, it),
-  drawers: (v, g, it) => baseUnit(v, g, it, { rows: 3, cols: 1 }),
+function ovenFront(view, g, w, d, y, color) {
+  g.add(box(view, w - 0.01, 0.6, 0.02, color === DARK ? DARK : color, 0, y, d / 2, { roughness: 0.2, metalness: color === DARK ? 0 : 0.5 }));
+  g.add(box(view, w - 0.12, 0.3, 0.022, '#15171a', 0, y + 0.14, d / 2, { roughness: 0.05 }));
+  g.add(box(view, w - 0.14, 0.015, 0.03, STEEL, 0, y + 0.5, d / 2 + 0.02, METAL));
+}
+
+function microFront(view, g, w, d, y, h) {
+  g.add(box(view, w - 0.01, h, 0.02, DARK, 0, y, d / 2, { roughness: 0.2 }));
+  g.add(box(view, w * 0.62, h * 0.7, 0.022, '#0d0e10', -w * 0.12, y + h * 0.15, d / 2, { roughness: 0.05 }));
+}
+
+/** Shelves held by four corner posts. */
+function rack(view, g, it, { shelves = 3, top, posts = it.color, legsOnly = false } = {}) {
+  const w = it.w * M; const d = it.d * M; const h = it.h * M;
+  const post = 0.025;
+  const lx = w / 2 - post / 2; const lz = d / 2 - post / 2;
+  for (const [x, z] of [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]]) g.add(box(view, post, h, post, posts, x, 0, z, METAL));
+  const n = Math.max(1, shelves);
+  for (let i = 0; i < n; i++) {
+    const y = legsOnly ? 0.15 : 0.06 + ((h - 0.08) * i) / Math.max(1, n - 1);
+    g.add(box(view, w - 0.01, 0.02, d - 0.01, i === n - 1 && top ? top : it.color, 0, Math.min(y, h - 0.02), 0, { roughness: 0.5 }));
+  }
+}
+
+export const BUILDERS = {
+  base: (v, g, it, look) => baseUnit(v, g, it, { cols: look.cols, countertop: look.countertop ?? true, drawer: look.drawer }),
+  drawers: (v, g, it, look) => baseUnit(v, g, it, { rows: look.rows ?? 3, cols: 1 }),
   dishwasher: (v, g, it) => baseUnit(v, g, it, { rows: 1, cols: 1 }),
-  island(v, g, it) {
+  blindcorner(v, g, it) {
+    baseUnit(v, g, it, { front: false });
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    const doorW = Math.min(0.6, w * 0.5);
+    g.add(box(v, w - doorW - 0.004, h - 0.14, 0.018, it.color, -doorW / 2, 0.104, d / 2));
+    fronts(v, g, { w: doorW, d: d - 0.02, y0: 0.1, y1: h - 0.04, color: it.color, cx: w / 2 - doorW / 2 });
+  },
+  corner: (v, g, it) => cornerUnit(v, g, it, 60, (sub, part) => baseUnit(v, sub, part, { cols: 1 })),
+  wallcorner: (v, g, it) => cornerUnit(v, g, it, 37, (sub, part) => wallUnit(v, sub, part, { cols: 1 })),
+  ovenbase(v, g, it) {
+    baseUnit(v, g, it, { front: false });
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    fronts(v, g, { w, d: d - 0.02, y0: 0.1, y1: h - 0.66, color: it.color, rows: 1 });
+    ovenFront(v, g, w, d - 0.02, h - 0.65, DARK);
+  },
+  island(v, g, it, look) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
     g.add(box(v, w - 0.1, 0.1, d - 0.4, DARK, 0, 0, 0));
     g.add(box(v, w - 0.02, h - 0.14, d - 0.3, it.color, 0, 0.1, -0.05));
     fronts(v, g, { w: w - 0.02, d: d - 0.4, y0: 0.1, y1: h - 0.04, cols: Math.max(1, Math.round(w / 0.6)), rows: 1, color: it.color });
-    g.add(box(v, w + 0.04, 0.04, d, COUNTER, 0, h - 0.04, 0, { roughness: 0.35 }));
+    g.add(box(v, w + 0.04, 0.04, d, look.top ?? COUNTER, 0, h - 0.04, 0, { roughness: 0.35 }));
   },
-  wall(v, g, it) {
+  opentable(v, g, it, look) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
-    g.add(box(v, w - 0.004, h, d - 0.02, '#e7e3dc', 0, 0, -0.01));
-    fronts(v, g, { w, d: d - 0.02, y0: 0, y1: h, cols: w > 0.65 ? 2 : 1, rows: 1, color: it.color, handleLow: true });
+    const leg = 0.05;
+    const lx = w / 2 - leg / 2 - 0.02; const lz = d / 2 - leg / 2 - 0.02;
+    for (const [x, z] of [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]]) g.add(box(v, leg, h - 0.04, leg, it.color, x, 0, z));
+    for (let i = 0; i < (look.shelves ?? 1); i++) {
+      g.add(box(v, w - 0.06, 0.025, d - 0.06, it.color, 0, 0.12 + i * 0.3, 0, { roughness: 0.6 }));
+    }
+    g.add(box(v, w, 0.04, d, look.top ?? it.color, 0, h - 0.04, 0, { roughness: 0.45 }));
   },
+  wall: (v, g, it, look) => wallUnit(v, g, it, look),
   shelf(v, g, it) {
     g.add(box(v, it.w * M, it.h * M, it.d * M, it.color, 0, 0, 0));
   },
-  tall(v, g, it) {
+  railshelf(v, g, it) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
-    g.add(box(v, w, 0.1, d - 0.06, DARK, 0, 0, -0.03));
-    g.add(box(v, w - 0.004, h - 0.1, d - 0.02, '#e7e3dc', 0, 0.1, -0.01));
-    fronts(v, g, { w, d: d - 0.02, y0: 0.1, y1: 0.1 + (h - 0.1) * 0.62, color: it.color });
-    fronts(v, g, { w, d: d - 0.02, y0: 0.1 + (h - 0.1) * 0.62, y1: h, color: it.color });
+    g.add(box(v, w, 0.015, d, it.color, 0, h - 0.015, 0, METAL));
+    for (const x of [-w / 2 + 0.03, w / 2 - 0.03]) g.add(box(v, 0.01, h, 0.02, it.color, x, 0, -d / 2 + 0.01, METAL));
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, w - 0.04, 12), v.material(it.color, METAL));
+    rail.rotation.z = Math.PI / 2;
+    rail.position.set(0, 0.03, -d / 2 + 0.03);
+    g.add(rail);
+  },
+  rail(v, g, it) {
+    const w = it.w * M; const d = it.d * M;
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, w, 12), v.material(it.color, METAL));
+    rail.rotation.z = Math.PI / 2;
+    rail.position.set(0, 0.015, d / 2 - 0.01);
+    g.add(rail);
+    for (const x of [-w / 2 + 0.03, w / 2 - 0.03]) g.add(box(v, 0.012, 0.012, d, it.color, x, 0.009, 0, METAL));
+  },
+  rack: (v, g, it, look) => rack(v, g, it, look),
+  cubes(v, g, it, look) {
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    const t = 0.035; const cols = look.cols ?? 2; const rows = look.rows ?? 4;
+    g.add(box(v, w, t, d, it.color, 0, 0, 0));
+    g.add(box(v, w, t, d, it.color, 0, h - t, 0));
+    g.add(box(v, w, h, 0.005, '#d9d6cf', 0, 0, -d / 2 + 0.003));
+    for (let c = 0; c <= cols; c++) g.add(box(v, t, h - 2 * t, d, it.color, -w / 2 + t / 2 + ((w - t) * c) / cols, t, 0));
+    for (let r = 1; r < rows; r++) g.add(box(v, w - 2 * t, 0.015, d, it.color, 0, t + ((h - 2 * t) * r) / rows, 0));
+  },
+  tall(v, g, it, look) {
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    const plinth = look.plinth === false ? 0 : 0.1;
+    if (plinth) g.add(box(v, w, plinth, d - 0.06, DARK, 0, 0, -0.03));
+    g.add(box(v, w - 0.004, h - plinth, d - 0.02, '#e7e3dc', 0, plinth, -0.01));
+    const splits = [0, ...(look.splits ?? [0.62]), 1];
+    const cols = look.cols ?? 1;
+    for (let i = 0; i < splits.length - 1; i++) {
+      const y0 = plinth + (h - plinth) * splits[i];
+      const y1 = plinth + (h - plinth) * splits[i + 1];
+      fronts(v, g, { w, d: d - 0.02, y0, y1, cols, color: it.color, handleLow: i > 0 });
+    }
   },
   oventower(v, g, it) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
     g.add(box(v, w, 0.1, d - 0.06, DARK, 0, 0, -0.03));
     g.add(box(v, w - 0.004, h - 0.1, d - 0.02, '#e7e3dc', 0, 0.1, -0.01));
     fronts(v, g, { w, d: d - 0.02, y0: 0.1, y1: 0.8, rows: 2, color: it.color });
-    g.add(box(v, w - 0.01, 0.6, 0.02, DARK, 0, 0.82, d / 2, { roughness: 0.2 }));
-    g.add(box(v, w - 0.12, 0.3, 0.022, '#15171a', 0, 0.94, d / 2, { roughness: 0.05 }));
+    ovenFront(v, g, w, d, 0.82, DARK);
     fronts(v, g, { w, d: d - 0.02, y0: 1.44, y1: h, color: it.color });
   },
-  fridge(v, g, it) {
+  ovenmicro(v, g, it) {
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    g.add(box(v, w, 0.1, d - 0.06, DARK, 0, 0, -0.03));
+    g.add(box(v, w - 0.004, h - 0.1, d - 0.02, '#e7e3dc', 0, 0.1, -0.01));
+    fronts(v, g, { w, d: d - 0.02, y0: 0.1, y1: 0.8, rows: 2, color: it.color });
+    ovenFront(v, g, w, d, 0.82, DARK);
+    microFront(v, g, w, d, 1.44, 0.38);
+    fronts(v, g, { w, d: d - 0.02, y0: 1.84, y1: h, color: it.color, handleLow: true });
+  },
+  oven(v, g, it) {
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    g.add(box(v, w - 0.01, h, d - 0.02, '#3a3c40', 0, 0, -0.01));
+    ovenFront(v, g, w, d - 0.02, Math.max(0, h - 0.6), it.color === '#2b2d31' ? DARK : it.color);
+  },
+  fridge(v, g, it, look) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
     const opts = { metalness: 0.6, roughness: 0.35 };
     g.add(box(v, w, h, d - 0.03, it.color, 0, 0, -0.015, opts));
-    const split = h * 0.62;
-    g.add(box(v, w - 0.01, split - 0.02, 0.03, it.color, 0, 0.01, d / 2 - 0.015, opts));
+    if (look.sideBySide) {
+      g.add(box(v, w / 2 - 0.01, h - 0.02, 0.03, it.color, -w / 4, 0.01, d / 2 - 0.015, opts));
+      g.add(box(v, w / 2 - 0.01, h - 0.02, 0.03, it.color, w / 4, 0.01, d / 2 - 0.015, opts));
+      for (const x of [-0.03, 0.03]) g.add(box(v, 0.02, 0.6, 0.03, '#8e9297', x, h / 2 - 0.3, d / 2 + 0.01, opts));
+      return;
+    }
+    const split = h * (look.split ?? 0.62);
+    if (split > 0.01) g.add(box(v, w - 0.01, split - 0.02, 0.03, it.color, 0, 0.01, d / 2 - 0.015, opts));
     g.add(box(v, w - 0.01, h - split - 0.02, 0.03, it.color, 0, split + 0.01, d / 2 - 0.015, opts));
-    g.add(box(v, 0.02, 0.5, 0.03, '#8e9297', w / 2 - 0.06, split - 0.55, d / 2 + 0.01, opts));
-    g.add(box(v, 0.02, 0.4, 0.03, '#8e9297', w / 2 - 0.06, split + 0.1, d / 2 + 0.01, opts));
+    if (split > 0.01) g.add(box(v, 0.02, Math.min(0.5, split * 0.5), 0.03, '#8e9297', w / 2 - 0.06, split - Math.min(0.55, split * 0.6), d / 2 + 0.01, opts));
+    g.add(box(v, 0.02, Math.min(0.4, (h - split) * 0.4), 0.03, '#8e9297', w / 2 - 0.06, split + 0.1, d / 2 + 0.01, opts));
   },
   stove(v, g, it) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
@@ -485,15 +690,35 @@ const BUILDERS = {
     for (let i = 0; i < 4; i++) g.add(cyl(v, 0.015, 0.02, DARK, -w / 2 + 0.1 + i * ((w - 0.2) / 3), h - 0.12, d / 2, {}));
     hobTop(v, g, w, d, h - 0.02, true);
   },
-  hob(v, g, it) {
-    baseUnit(v, g, it, { rows: 3, cols: 1 });
+  hob(v, g, it, look) {
+    baseUnit(v, g, it, { rows: look.rows ?? 3, cols: 1 });
     hobTop(v, g, it.w * M, it.d * M, it.h * M, true);
   },
-  hood(v, g, it) {
+  hobonly(v, g, it, look) {
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    if (h > 0.03) g.add(box(v, w, h - 0.006, d, look.gas ? it.color : DARK, 0, 0, 0, look.gas ? METAL : {}));
+    hobTop(v, g, w + 0.02, d + 0.02, Math.max(0, h - 0.006), true, { gas: look.gas, zones: look.zones, color: look.gas ? it.color : '#111214' });
+  },
+  appliancebox(v, g, it, look) {
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    g.add(box(v, w, h, d, it.color, 0, 0, 0, { roughness: 0.35, metalness: 0.2 }));
+    if (look.panel) g.add(box(v, w - 0.04, 0.08, 0.01, '#3a3c40', 0, h - 0.1, d / 2, { roughness: 0.2 }));
+    else g.add(box(v, w * 0.6, h * 0.3, 0.01, '#15171a', 0, h * 0.55, d / 2, { roughness: 0.1 }));
+  },
+  canister(v, g, it) {
+    const h = it.h * M; const r = Math.min(it.w, it.d) * M * 0.45;
+    g.add(cyl(v, r, h, it.color, 0, 0, 0, METAL));
+  },
+  hood(v, g, it, look) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
     const opts = { metalness: 0.7, roughness: 0.3 };
     g.add(box(v, w, 0.06, d, it.color, 0, 0, 0, opts));
-    g.add(box(v, w * 0.45, h - 0.06, d * 0.5, it.color, 0, 0.06, -d * 0.25, opts));
+    g.add(box(v, w * 0.4, h - 0.06, d * 0.45, it.color, 0, 0.06, look.island ? 0 : -d * 0.275, opts));
+  },
+  hoodflat(v, g, it) {
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    g.add(box(v, w - 0.01, h, d, it.color, 0, 0, 0, { metalness: 0.7, roughness: 0.3 }));
+    g.add(box(v, w * 0.7, 0.002, d * 0.6, '#55595e', 0, -0.002, 0));
   },
   microwave(v, g, it) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
@@ -514,33 +739,139 @@ const BUILDERS = {
     sinkBasin(v, g, bw / 2 + 0.02, 0.02, bw, 0.42, top);
     faucet(v, g, 0, -it.d * M / 2 + 0.07, top);
   },
+  apron(v, g, it, look) {
+    // Ceramic farmhouse sink: the bowl's front replaces the top door.
+    const w = it.w * M; const d = it.d * M; const h = it.h * M;
+    baseUnit(v, g, { ...it, h: it.h - 23 }, { countertop: false, cols: w > 0.65 ? 2 : 1 });
+    g.add(box(v, w, 0.23, d - 0.01, '#f7f7f5', 0, h - 0.23, 0.005, { roughness: 0.25 }));
+    const bowls = look.bowls ?? 1;
+    const bw = (w - 0.08 - (bowls - 1) * 0.04) / bowls;
+    for (let i = 0; i < bowls; i++) {
+      const x = -w / 2 + 0.04 + bw / 2 + i * (bw + 0.04);
+      g.add(box(v, bw, 0.012, d - 0.16, '#d5d6d3', x, h - 0.01, 0.04, { roughness: 0.3 }));
+    }
+    faucet(v, g, 0, -d / 2 + 0.05, h);
+  },
+  sinktop(v, g, it, look) {
+    const w = it.w * M; const d = it.d * M;
+    const bowls = look.bowls ?? 1;
+    const color = it.color;
+    const opts = color === '#2b2d31' ? { roughness: 0.5 } : METAL;
+    g.add(box(v, w, 0.008, d, color, 0, 0, 0, opts));
+    if (look.drainer) {
+      const bw = w * 0.5;
+      g.add(box(v, bw - 0.04, 0.01, d - 0.08, '#4a4e53', -w / 4, 0.001, 0.01, { metalness: 0.6, roughness: 0.4 }));
+      for (let i = 0; i < 6; i++) g.add(box(v, w * 0.4, 0.003, 0.006, '#8b9095', w / 4, 0.008, -d / 2 + 0.08 + i * ((d - 0.16) / 5), METAL));
+    } else {
+      const bw = (w - 0.06 - (bowls - 1) * 0.04) / bowls;
+      for (let i = 0; i < bowls; i++) {
+        const x = -w / 2 + 0.03 + bw / 2 + i * (bw + 0.04);
+        g.add(box(v, bw, 0.01, d - 0.08, '#4a4e53', x, 0.001, 0.01, { metalness: 0.6, roughness: 0.4 }));
+      }
+    }
+    faucet(v, g, look.drainer ? -w / 4 : 0, -d / 2 + 0.03, 0, STEEL, 0.28);
+  },
+  tap(v, g, it) {
+    faucet(v, g, 0, -it.d * M / 2 + 0.02, 0, it.color, it.h * M);
+  },
+  worktop(v, g, it) {
+    g.add(box(v, it.w * M, it.h * M, it.d * M, it.color, 0, 0, 0, { roughness: 0.4 }));
+  },
   table(v, g, it) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
     g.add(box(v, w, 0.04, d, it.color, 0, h - 0.04, 0, { roughness: 0.5 }));
     const lx = w / 2 - 0.06; const lz = d / 2 - 0.06;
     for (const [x, z] of [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]]) g.add(box(v, 0.05, h - 0.04, 0.05, it.color, x, 0, z));
   },
-  chair(v, g, it) {
+  roundtable(v, g, it) {
+    const h = it.h * M; const r = Math.min(it.w, it.d) * M / 2;
+    g.add(cyl(v, r, 0.035, it.color, 0, h - 0.035, 0, { roughness: 0.5 }));
+    g.add(cyl(v, 0.06, h - 0.035, it.color, 0, 0, 0));
+    g.add(cyl(v, r * 0.45, 0.03, it.color, 0, 0, 0));
+  },
+  chair(v, g, it, look) {
     const w = it.w * M; const d = it.d * M; const h = it.h * M;
-    const seat = 0.46;
+    const seat = (look.seat ?? 46) * M;
     g.add(box(v, w, 0.04, d, it.color, 0, seat - 0.04, 0));
     const lx = w / 2 - 0.03; const lz = d / 2 - 0.03;
     for (const [x, z] of [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]]) g.add(box(v, 0.03, seat - 0.04, 0.03, it.color, x, 0, z));
+    if (look.seat) g.add(box(v, w - 0.04, 0.02, 0.02, it.color, 0, 0.25, lz));
     g.add(box(v, w, h - seat, 0.03, it.color, 0, seat, -d / 2 + 0.015));
   },
   stool(v, g, it) {
     const h = it.h * M;
     const r = Math.min(it.w, it.d) * M * 0.45;
     g.add(cyl(v, r, 0.05, it.color, 0, h - 0.05, 0));
-    g.add(cyl(v, 0.025, h - 0.05, STEEL, 0, 0, 0, { metalness: 0.8, roughness: 0.3 }));
-    g.add(cyl(v, r * 0.9, 0.02, STEEL, 0, 0, 0, { metalness: 0.8, roughness: 0.3 }));
+    g.add(cyl(v, 0.025, h - 0.05, STEEL, 0, 0, 0, METAL));
+    g.add(cyl(v, r * 0.9, 0.02, STEEL, 0, 0, 0, METAL));
+  },
+
+  // ---------- doors and windows (sit inside the wall thickness) ----------
+  door(v, g, it, look) {
+    const w = it.w * M; const h = it.h * M;
+    const t = v.project.room.wallThickness * M;
+    const frame = 0.05;
+    const fd = t + 0.02;
+    // Frame (jambs + head) wraps the wall on both sides.
+    g.add(box(v, frame, h, fd, it.color, -w / 2 + frame / 2, 0, 0));
+    g.add(box(v, frame, h, fd, it.color, w / 2 - frame / 2, 0, 0));
+    g.add(box(v, w, frame, fd, it.color, 0, h - frame, 0));
+    const lw = w - 2 * frame;
+    const lh = h - frame - 0.01;
+    const leaves = look.sliding ? 2 : look.leaves ?? 1;
+    const leafW = lw / leaves;
+    for (let i = 0; i < leaves; i++) {
+      const x = -lw / 2 + leafW * (i + 0.5);
+      const z = look.sliding ? (i ? -0.02 : 0.02) : t / 2 - 0.025;
+      const lwid = look.sliding ? leafW + 0.03 : leafW - 0.004;
+      if (look.glass || look.sliding) {
+        const b = 0.07;
+        g.add(box(v, lwid, b, 0.04, it.color, x, 0.005, z));
+        g.add(box(v, lwid, b, 0.04, it.color, x, lh - b, z));
+        g.add(box(v, b, lh - 2 * b, 0.04, it.color, x - lwid / 2 + b / 2, b, z));
+        g.add(box(v, b, lh - 2 * b, 0.04, it.color, x + lwid / 2 - b / 2, b, z));
+        g.add(box(v, lwid - 2 * b, lh - 2 * b, 0.008, '#cfe3e8', x, b, z, GLASS));
+      } else {
+        g.add(box(v, lwid, lh, 0.04, it.color, x, 0.005, z, { roughness: 0.5 }));
+      }
+      // Lever handles on both faces, at the opening edge of each leaf.
+      const hx = leaves === 1 ? x + leafW / 2 - 0.08 : x + (i === 0 ? leafW / 2 - 0.06 : -leafW / 2 + 0.06);
+      for (const side of [1, -1]) {
+        g.add(box(v, 0.12, 0.02, 0.02, STEEL, hx + (leaves === 2 && i === 1 ? 0.04 : -0.04), 1.04, z + side * 0.035, METAL));
+      }
+    }
+  },
+  passage(v, g, it) {
+    const w = it.w * M; const h = it.h * M;
+    const t = v.project.room.wallThickness * M;
+    const frame = 0.06;
+    g.add(box(v, frame, h, t + 0.01, it.color, -w / 2 + frame / 2, 0, 0));
+    g.add(box(v, frame, h, t + 0.01, it.color, w / 2 - frame / 2, 0, 0));
+    g.add(box(v, w, frame, t + 0.01, it.color, 0, h - frame, 0));
+  },
+  window(v, g, it, look) {
+    const w = it.w * M; const h = it.h * M;
+    const t = v.project.room.wallThickness * M;
+    const f = 0.06;
+    const fd = 0.08;
+    const z = -t / 2 + fd / 2 + 0.02;
+    g.add(box(v, w, f, fd, it.color, 0, 0, z));
+    g.add(box(v, w, f, fd, it.color, 0, h - f, z));
+    g.add(box(v, f, h - 2 * f, fd, it.color, -w / 2 + f / 2, f, z));
+    g.add(box(v, f, h - 2 * f, fd, it.color, w / 2 - f / 2, f, z));
+    const panes = look.panes ?? 1;
+    for (let i = 1; i < panes; i++) g.add(box(v, 0.05, h - 2 * f, fd, it.color, -w / 2 + (w * i) / panes, f, z));
+    g.add(box(v, w - 2 * f, h - 2 * f, 0.008, '#cfe3e8', 0, f, z, GLASS));
+    // Window sill on the room side.
+    g.add(box(v, w + 0.06, 0.025, t / 2 + 0.04, '#f2f0eb', 0, -0.025, t / 4 + 0.02));
   },
 };
 
-function buildItem(it, view) {
+export function buildItem(it, view) {
   const g = new THREE.Group();
-  const style = catalogEntry(it.type)?.style ?? 'base';
-  (BUILDERS[style] ?? BUILDERS.base)(view, g, it);
+  const entry = catalogEntry(it.type);
+  const style = entry?.style ?? 'base';
+  (BUILDERS[style] ?? BUILDERS.base)(view, g, it, entry?.look ?? {});
   g.userData.itemId = it.id;
   return g;
 }

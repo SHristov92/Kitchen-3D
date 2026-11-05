@@ -8,10 +8,14 @@ object library, and walk through it in 3D on the right.
 - **Room editor (2D plan)**: rectangle, L-shape, alcove and angled presets, or any
   outline you like. Drag corners and walls, double-click a wall to add a corner, click a
   wall to type its exact length. Wall height, thickness and colours are editable.
-- **Object library**: base, wall and tall cabinets, appliances (fridge, cooker, hob,
-  dishwasher, hood, microwave), sinks and furniture. Click or drag an object onto the plan;
-  it snaps against the nearest wall and lines up with its neighbours. Size, height off the
-  floor, rotation and colour can be changed per object.
+- **Object library**: about 190 objects in collapsible groups with search (by name, series or
+  width, e.g. "METOD 60") and an All / IKEA / Basic filter. It includes about 140 items from the
+  IKEA kitchen range (METOD/MAXIMERA, ENHET and KNOXHULT cabinets, appliances, sinks and taps,
+  worktops, islands and trolleys, shelving, tables and seating) at their standard sizes, all
+  drawn with simple parametric models. Click or drag an object onto the plan; objects snap
+  against walls and neighbours. Size, height off the floor, rotation and colour can be changed per object.
+- **Doors and windows**: snap into a wall and cut an opening in it in the 3D view. Doors show
+  their swing on the plan.
 - **3D view**: an overview (walls between you and the room fade out) and a first-person
   walk mode with collision. The orange marker on the plan is where you stand.
 - **Projects**: saved automatically in the browser (IndexedDB). Several projects can be
@@ -75,7 +79,8 @@ All lengths are centimetres. The plan uses x to the right and y downwards; an ob
 | `src/main.js` | App start-up, toolbar, autosave, import/export, keyboard |
 | `src/editor2d.js` | Canvas plan editor |
 | `src/view3d.js` | Three.js scene, overview and walk modes, 3D object models |
-| `src/catalog.js` | The object library |
+| `src/catalog.js` | The object library, doors and windows |
+| `src/catalog-ikea.js` | IKEA kitchen items |
 | `src/panels.js` | Room, library and selection side panels |
 | `src/model.js` | Project data, room presets, validation of imported files |
 | `src/geometry.js`, `src/snapping.js` | 2D maths and wall/neighbour snapping |

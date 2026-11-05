@@ -198,7 +198,7 @@ export class Editor2D {
         if (!free) {
           it.x = Math.round(it.x);
           it.y = Math.round(it.y);
-          const s = snapItemToWalls(it, proj.room.points, proj.items);
+          const s = snapItemToWalls(it, proj.room.points, proj.items, 25, proj.room.wallThickness);
           if (s) Object.assign(it, s);
         }
       }, { record: false });
@@ -275,7 +275,7 @@ export class Editor2D {
   /** Add a library object at a plan position (snapped to a wall if one is close). */
   addItem(type, at = this.viewCenter()) {
     const item = createItem(type, Math.round(at.x), Math.round(at.y));
-    const s = snapItemToWalls(item, this.project.room.points, this.project.items, 60);
+    const s = snapItemToWalls(item, this.project.room.points, this.project.items, 60, this.project.room.wallThickness);
     if (s) Object.assign(item, s);
     this.store.change((proj) => { proj.items.push(item); });
     this.store.select({ kind: 'item', id: item.id });
@@ -386,6 +386,7 @@ export class Editor2D {
   drawItem(it, selected, col) {
     const { ctx } = this;
     const entry = catalogEntry(it.type);
+    if (entry?.opening) { this.drawOpening(it, entry, selected, col); return; }
     const corners = itemCorners(it).map((c) => this.toScreen(c));
     const wallMounted = it.elevation >= 100;
     ctx.save();
@@ -422,8 +423,71 @@ export class Editor2D {
       ctx.font = '11px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const label = fitText(ctx, entry?.name ?? it.type, wpx - 6);
+      const label = fitText(ctx, entry?.label ?? entry?.name ?? it.type, wpx - 6);
       ctx.fillText(label, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  /** A door or window: a gap in the wall, with the door swing or the glass line. */
+  drawOpening(it, entry, selected, col) {
+    const { ctx } = this;
+    const r = (it.rotation * Math.PI) / 180;
+    const cos = Math.cos(r);
+    const sin = Math.sin(r);
+    const P = (lx, ly) => this.toScreen({ x: it.x + lx * cos - ly * sin, y: it.y + lx * sin + ly * cos });
+    const hw = it.w / 2;
+    const hd = it.d / 2;
+    const corners = [P(-hw, -hd), P(hw, -hd), P(hw, hd), P(-hw, hd)];
+    const accent = col('--accent');
+    const ink = selected ? accent : 'rgba(30,30,30,0.85)';
+    ctx.save();
+    ctx.beginPath();
+    corners.forEach((c, i) => (i ? ctx.lineTo(c.x, c.y) : ctx.moveTo(c.x, c.y)));
+    ctx.closePath();
+    ctx.fillStyle = col('--plan-floor');
+    ctx.fill();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = selected ? 2 : 1;
+    ctx.stroke();
+    const look = entry.look ?? {};
+    ctx.lineWidth = selected ? 2 : 1.2;
+    if (entry.style === 'window') {
+      // Two thin lines for the glass.
+      for (const ly of [-hd * 0.25, hd * 0.25]) {
+        const a = P(-hw, ly); const b = P(hw, ly);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+    } else if (entry.style === 'door') {
+      if (look.sliding || look.pocket) {
+        const a = P(-hw, hd * 0.3); const b = P(look.pocket ? hw : hw * 0.1, hd * 0.3);
+        const c = P(-hw * 0.1, -hd * 0.3); const d = P(hw, -hd * 0.3);
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        if (!look.pocket) { ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); }
+        ctx.stroke();
+      } else {
+        // Leaf (straight line, opened 90° into the room) and its swing arc.
+        const leaves = look.leaves ?? 1;
+        const lw = it.w / leaves;
+        const hinges = leaves === 2 ? [[-hw, 1], [hw, -1]] : [[-hw, 1]];
+        for (const [hx, dirx] of hinges) {
+          const steps = 18;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          for (let k = 0; k <= steps; k++) {
+            const t = (k / steps) * (Math.PI / 2);
+            const p = P(hx + dirx * lw * Math.cos(t), hd + lw * Math.sin(t));
+            if (k) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+          }
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const h0 = P(hx, hd); const h1 = P(hx, hd + lw);
+          ctx.lineWidth = 2.5;
+          ctx.beginPath(); ctx.moveTo(h0.x, h0.y); ctx.lineTo(h1.x, h1.y); ctx.stroke();
+          ctx.lineWidth = selected ? 2 : 1.2;
+        }
+      }
     }
     ctx.restore();
   }

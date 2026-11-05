@@ -1,11 +1,16 @@
+import { catalogEntry } from './catalog.js';
 import { dist, inwardNormal, toItemLocal } from './geometry.js';
 
 /**
  * Pull an object against the nearest wall: its back goes flush to the wall and its
  * front faces into the room. Then line it up edge-to-edge with neighbours on that wall.
- * Returns a new { x, y, rotation } or null when no wall is close enough.
+ * Doors and windows (catalog `opening`) go into the wall instead: centred in its
+ * thickness, with their depth set to the wall thickness.
+ * Returns a new { x, y, rotation } (plus d for openings) or null when no wall is close enough.
  */
-export function snapItemToWalls(item, points, items = [], threshold = 25) {
+export function snapItemToWalls(item, points, items = [], threshold = 25, wallThickness = 12) {
+  const opening = !!catalogEntry(item.type)?.opening;
+  const target = opening ? -wallThickness / 2 : item.d / 2; // centre's distance into the room
   let best = null;
   for (let i = 0; i < points.length; i++) {
     const a = points[i];
@@ -19,8 +24,8 @@ export function snapItemToWalls(item, points, items = [], threshold = 25) {
     const off = rel.x * n.x + rel.y * n.y; // distance from the wall into the room
     if (along < -item.w / 2 || along > len + item.w / 2) continue;
     // Use the item's depth as seen from this wall.
-    const gap = Math.abs(off - item.d / 2);
-    if (off < -item.d / 2 || gap > threshold) continue;
+    const gap = Math.abs(off - target);
+    if ((!opening && off < -item.d / 2) || gap > threshold) continue;
     if (!best || gap < best.gap) best = { gap, a, dir, n, along, len };
   }
   if (!best) return null;
@@ -29,11 +34,12 @@ export function snapItemToWalls(item, points, items = [], threshold = 25) {
   if (len >= item.w) along = Math.min(Math.max(along, item.w / 2), len - item.w / 2);
   const rotation = normalizeAngle((Math.atan2(-n.x, n.y) * 180) / Math.PI);
   const snapped = {
-    x: a.x + dir.x * along + n.x * (item.d / 2),
-    y: a.y + dir.y * along + n.y * (item.d / 2),
+    x: a.x + dir.x * along + n.x * target,
+    y: a.y + dir.y * along + n.y * target,
     rotation,
   };
-  return snapToNeighbours({ ...item, ...snapped }, items);
+  if (opening) return { ...snapped, d: wallThickness };
+  return snapToNeighbours({ ...item, ...snapped }, items.filter((o) => !catalogEntry(o.type)?.opening));
 }
 
 /** Close small gaps between objects that stand in the same line. */
