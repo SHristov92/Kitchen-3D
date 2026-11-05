@@ -2,6 +2,7 @@ import './style.css';
 import { catalogEntry } from './catalog.js';
 import { h } from './dom.js';
 import { Editor2D } from './editor2d.js';
+import { EXAMPLES, createExampleProject, drawThumbnail } from './examples.js';
 import { createItem, createProject, normalizeProject, toExportFile, uid } from './model.js';
 import {
   deleteSelected, duplicateSelected, renderLibraryPanel, renderRoomPanel, renderSelectionPanel,
@@ -325,7 +326,42 @@ async function boot() {
       ),
     )));
   };
-  $('btn-projects').onclick = async () => { await renderProjectList(); dialog.showModal(); };
+  const showDialogTab = (tab) => {
+    $('tab-mine').classList.toggle('active', tab === 'mine');
+    $('tab-examples').classList.toggle('active', tab === 'examples');
+    $('pane-mine').hidden = tab !== 'mine';
+    $('pane-examples').hidden = tab !== 'examples';
+    if (tab === 'examples') renderExampleList();
+  };
+  const renderExampleList = () => {
+    const list = $('example-list');
+    if (list.children.length) return;
+    list.replaceChildren(...EXAMPLES.map((ex) => {
+      const canvas = h('canvas', { 'aria-hidden': 'true' });
+      const li = h('li', {}, h('button', {
+        class: 'example-card',
+        title: `Open a copy of "${ex.name}"`,
+        onclick: async () => {
+          await openProject(createExampleProject(ex.id));
+          dialog.close();
+          toast(`Opened a copy of "${ex.name}". Change anything you like; it is saved as your own project.`);
+        },
+      },
+      canvas,
+      h('div', { class: 'example-info' },
+        h('strong', {}, ex.name),
+        h('span', { class: 'muted small' }, ex.description),
+      )));
+      return li;
+    }));
+    // Draw after layout so the canvases know their size.
+    requestAnimationFrame(() => {
+      [...list.querySelectorAll('canvas')].forEach((c, i) => drawThumbnail(c, EXAMPLES[i].build()));
+    });
+  };
+  $('tab-mine').onclick = () => showDialogTab('mine');
+  $('tab-examples').onclick = () => showDialogTab('examples');
+  $('btn-projects').onclick = async () => { await renderProjectList(); showDialogTab('mine'); dialog.showModal(); };
 
   // ---------- keyboard ----------
   window.addEventListener('keydown', (e) => {

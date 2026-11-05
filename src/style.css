@@ -432,3 +432,11 @@ h4 { font-size: 13px; margin: 14px 0 6px; }
   .dialog { padding: 14px; max-height: calc(100dvh - 32px); }
   .toast { top: auto; bottom: calc(70px + env(safe-area-inset-bottom)); left: 16px; right: 16px; transform: none; max-width: none; text-align: center; }
 }
+
+.dialog-tabs button { padding: 5px 12px; font-size: 13px; }
+.example-list { list-style: none; padding: 0; margin: 10px 0 0; max-height: 60vh; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.example-list li { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+.example-list li button.example-card { all: unset; cursor: pointer; display: flex; flex-direction: column; flex: 1; }
+.example-list li button.example-card:hover, .example-list li button.example-card:focus-visible { background: rgba(47, 124, 246, 0.08); }
+.example-list canvas { width: 100%; height: 110px; display: block; background: rgba(0, 0, 0, 0.03); }
+.example-info { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 3px; }

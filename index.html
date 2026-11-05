@@ -88,11 +88,20 @@
 
     <dialog id="projects-dialog" class="dialog">
       <div class="dialog-head">
-        <h2>Your projects</h2>
+        <div class="segmented dialog-tabs" role="tablist" aria-label="Projects or examples">
+          <button id="tab-mine" class="active" role="tab">Your projects</button>
+          <button id="tab-examples" role="tab">Examples</button>
+        </div>
         <button class="icon" data-close title="Close">×</button>
       </div>
-      <p class="muted small">Projects are saved automatically in this browser. Use Export to keep a copy as a file or move it to another computer.</p>
-      <ul id="project-list" class="project-list"></ul>
+      <div id="pane-mine">
+        <p class="muted small">Projects are saved automatically in this browser. Use Export to keep a copy as a file or move it to another computer.</p>
+        <ul id="project-list" class="project-list"></ul>
+      </div>
+      <div id="pane-examples" hidden>
+        <p class="muted small">Ready-made kitchens with IKEA cabinets. Opening one makes your own copy to change; the example stays as it is.</p>
+        <ul id="example-list" class="example-list"></ul>
+      </div>
     </dialog>
 
     <dialog id="share-dialog" class="dialog">
