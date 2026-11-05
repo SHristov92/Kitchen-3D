@@ -27,6 +27,8 @@ export class View3D {
     this.needsRender = true;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Reading shader logs forces the browser to wait for every compile; skip it.
+    this.renderer.debug.checkShaderErrors = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
@@ -67,6 +69,10 @@ export class View3D {
     });
 
     this.floorTexture = makeTileTexture();
+    // Room materials live as long as the view. Disposing and recreating them on every
+    // edit made the GPU recompile their shaders each time (the main cost of a drag).
+    this.floorMat = new THREE.MeshStandardMaterial({ map: this.floorTexture, roughness: 0.8 });
+    this.wallMats = [];
     this.timer = new THREE.Timer();
 
     this.bindWalkInput();
@@ -148,9 +154,8 @@ export class View3D {
     const floorShape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x * M, -p.y * M)));
     const floorGeo = new THREE.ShapeGeometry(floorShape);
     floorGeo.rotateX(-Math.PI / 2);
-    const floorMat = new THREE.MeshStandardMaterial({ color: room.floorColor, map: this.floorTexture, roughness: 0.8 });
-    this.trackDisposable(floorMat);
-    const floor = new THREE.Mesh(floorGeo, floorMat);
+    this.floorMat.color.set(room.floorColor);
+    const floor = new THREE.Mesh(floorGeo, this.floorMat);
     floor.receiveShadow = true;
     this.roomGroup.add(floor);
 
@@ -165,15 +170,15 @@ export class View3D {
     // Walls: one mitred prism per wall so single walls can fade in the orbit view.
     const outer = offsetPolygon(pts, room.wallThickness);
     this.walls = [];
-    const wallMat = new THREE.MeshStandardMaterial({ color: room.wallColor, roughness: 0.9 });
-    this.trackDisposable(wallMat);
     const openings = wallOpenings(pts, items, (it) => catalogEntry(it.type)?.opening);
     for (let i = 0; i < pts.length; i++) {
       const j = (i + 1) % pts.length;
       const geo = wallGeometry(pts[i], pts[j], outer[i], outer[j], H, openings[i]);
-      const mesh = new THREE.Mesh(geo, wallMat.clone());
-      this.trackDisposable(mesh.material);
-      mesh.castShadow = true;
+      // One material per wall so each can fade on its own; reused between rebuilds.
+      const mat = (this.wallMats[i] ??= new THREE.MeshStandardMaterial({ roughness: 0.9 }));
+      mat.color.set(room.wallColor);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = !mat.transparent;
       mesh.receiveShadow = true;
       const n = inwardNormal(pts, i);
       mesh.userData = {
@@ -252,10 +257,6 @@ export class View3D {
     this.updateSelection();
     if (reframe) this.frameOrbit();
     this.invalidate(true);
-  }
-
-  trackDisposable(mat) {
-    (this.roomGroup.userData.disposables ??= []).push(mat);
   }
 
   updateSelection() {
@@ -439,8 +440,6 @@ function setWallFade(mesh, faded) {
 
 function disposeGroup(group) {
   group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
-  for (const m of group.userData.disposables ?? []) m.dispose();
-  group.userData.disposables = [];
   group.clear();
 }
 
