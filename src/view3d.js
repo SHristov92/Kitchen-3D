@@ -23,13 +23,17 @@ export class View3D {
     this.keys = new Set();
     this.pitch = -0.08;
     this.materials = new Map();
+    this.itemCache = new Map(); // item id -> { key, group }, reused while the item is unchanged
+    this.needsRender = true;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // The lights never move, so the shadow map is only redrawn when the scene changes.
+    this.renderer.shadowMap.autoUpdate = false;
     container.appendChild(this.renderer.domElement);
     this.canvas = this.renderer.domElement;
     this.canvas.tabIndex = 0;
@@ -47,11 +51,21 @@ export class View3D {
     this.scene.add(this.sun, this.sun.target);
 
     this.roomGroup = new THREE.Group();
-    this.scene.add(this.roomGroup);
+    this.itemsGroup = new THREE.Group();
+    this.scene.add(this.roomGroup, this.itemsGroup);
 
     this.orbit = new OrbitControls(this.camera, this.canvas);
     this.orbit.enableDamping = true;
     this.orbit.maxPolarAngle = Math.PI * 0.49;
+    // Damping keeps reporting sub-pixel changes for a long time; ignore those.
+    this.lastCam = { p: new THREE.Vector3(Infinity, 0, 0), q: new THREE.Quaternion() };
+    this.orbit.addEventListener('change', () => {
+      const { p, q } = this.lastCam;
+      if (p.distanceToSquared(this.camera.position) < 1e-10 && Math.abs(q.dot(this.camera.quaternion)) > 1 - 1e-10) return;
+      p.copy(this.camera.position);
+      q.copy(this.camera.quaternion);
+      this.invalidate();
+    });
 
     this.floorTexture = makeTileTexture();
     this.timer = new THREE.Timer();
@@ -61,6 +75,7 @@ export class View3D {
     store.subscribe((reason) => {
       if (reason === 'change' || reason === 'load') this.rebuild(reason === 'load');
       if (reason === 'select') this.updateSelection();
+      this.invalidate();
     });
     this.rebuild(true);
     this.resize();
@@ -68,6 +83,12 @@ export class View3D {
   }
 
   get project() { return this.store.project; }
+
+  /** Ask for a new frame; nothing is drawn while the view is still. */
+  invalidate(shadows = false) {
+    this.needsRender = true;
+    if (shadows) this.renderer.shadowMap.needsUpdate = true;
+  }
 
   setMode(mode) {
     this.mode = mode;
@@ -80,6 +101,7 @@ export class View3D {
       this.canvas.focus();
     }
     for (const w of this.walls) setWallFade(w, false);
+    this.invalidate(true);
   }
 
   resize() {
@@ -89,6 +111,7 @@ export class View3D {
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.invalidate();
   }
 
   frameOrbit() {
@@ -182,15 +205,29 @@ export class View3D {
       }
     }
 
-    // Objects
+    // Objects: only rebuild the ones whose shape changed (moving one keeps its model).
     this.itemMeshes = new Map();
+    this.itemsGroup.clear();
+    const seen = new Set();
     for (const it of items) {
-      const g = buildItem(it, this);
+      const key = itemModelKey(it, room);
+      let cached = this.itemCache.get(it.id);
+      if (!cached || cached.key !== key) {
+        if (cached) disposeItem(cached.group);
+        const g = buildItem(it, this);
+        g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        cached = { key, group: g };
+        this.itemCache.set(it.id, cached);
+      }
+      const g = cached.group;
       g.position.set(it.x * M, it.elevation * M, it.y * M);
       g.rotation.y = (-it.rotation * Math.PI) / 180;
-      g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      seen.add(it.id);
       this.itemMeshes.set(it.id, g);
-      this.roomGroup.add(g);
+      this.itemsGroup.add(g);
+    }
+    for (const [id, cached] of this.itemCache) {
+      if (!seen.has(id)) { disposeItem(cached.group); this.itemCache.delete(id); }
     }
 
     // Light from above the room centre.
@@ -210,6 +247,7 @@ export class View3D {
 
     this.updateSelection();
     if (reframe) this.frameOrbit();
+    this.invalidate(true);
   }
 
   trackDisposable(mat) {
@@ -260,6 +298,7 @@ export class View3D {
       last = { x: e.clientX, y: e.clientY };
       this.store.setViewer({ heading: this.project.viewer.heading + dx * 0.25 });
       this.pitch = THREE.MathUtils.clamp(this.pitch - dy * 0.004, -1.3, 1.3);
+      this.invalidate();
     });
     const end = () => { last = null; };
     this.canvas.addEventListener('pointerup', end);
@@ -304,8 +343,13 @@ export class View3D {
     if (heading !== v.heading || x !== v.x || y !== v.y) {
       this.store.setViewer({ x, y, heading: ((heading % 360) + 360) % 360 });
     }
-    this.camera.position.set(v.x * M, EYE_HEIGHT, v.y * M);
-    this.camera.rotation.set(this.pitch, (-v.heading * Math.PI) / 180, 0);
+    const px = v.x * M; const pz = v.y * M; const yaw = (-v.heading * Math.PI) / 180;
+    const c = this.camera;
+    if (c.position.x !== px || c.position.z !== pz || c.position.y !== EYE_HEIGHT || c.rotation.x !== this.pitch || c.rotation.y !== yaw) {
+      c.position.set(px, EYE_HEIGHT, pz);
+      c.rotation.set(this.pitch, yaw, 0);
+      this.invalidate();
+    }
   }
 
   fadeWalls() {
@@ -314,7 +358,7 @@ export class View3D {
     for (const w of this.walls) {
       tmp.copy(cam).sub(w.userData.mid);
       tmp.y = 0;
-      setWallFade(w, tmp.dot(w.userData.outward) > 0.3);
+      if (setWallFade(w, tmp.dot(w.userData.outward) > 0.3)) this.invalidate(true);
     }
   }
 
@@ -327,6 +371,8 @@ export class View3D {
       this.orbit.update();
       this.fadeWalls();
     }
+    if (!this.needsRender) return;
+    this.needsRender = false;
     this.selectionBox?.update();
     this.renderer.render(this.scene, this.camera);
   }
@@ -378,12 +424,13 @@ function wallGeometry(a, b, oa, ob, H, openings = []) {
 
 function setWallFade(mesh, faded) {
   const m = mesh.material;
-  if (m.transparent === faded) return;
+  if (m.transparent === faded) return false;
   m.transparent = faded;
   m.opacity = faded ? 0.12 : 1;
   m.depthWrite = !faded;
   mesh.castShadow = !faded;
   m.needsUpdate = true;
+  return true;
 }
 
 function disposeGroup(group) {
@@ -391,6 +438,41 @@ function disposeGroup(group) {
   for (const m of group.userData.disposables ?? []) m.dispose();
   group.userData.disposables = [];
   group.clear();
+}
+
+/** Everything an item's 3D model depends on, apart from where it stands. */
+function itemModelKey(it, room) {
+  const opening = catalogEntry(it.type)?.opening;
+  return [it.type, it.w, it.d, it.h, it.color, opening ? room.wallThickness : ''].join('|');
+}
+
+function disposeItem(group) {
+  group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+}
+
+/**
+ * Bake an object's many small parts into one mesh per material: a cabinet is ~10
+ * boxes but only 2-4 materials, so this cuts draw calls (and shadow draws) several times.
+ */
+function mergeByMaterial(g) {
+  g.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+  const byMat = new Map();
+  g.traverse((o) => {
+    if (!o.isMesh) return;
+    const geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    geo.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+    for (const name of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv'].includes(name)) geo.deleteAttribute(name);
+    o.geometry.dispose();
+    if (!byMat.has(o.material)) byMat.set(o.material, []);
+    byMat.get(o.material).push(geo);
+  });
+  g.clear();
+  for (const [mat, geos] of byMat) {
+    const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos);
+    if (geos.length > 1) geos.forEach((x) => x.dispose());
+    g.add(new THREE.Mesh(merged, mat));
+  }
 }
 
 function makeTileTexture() {
@@ -872,6 +954,7 @@ export function buildItem(it, view) {
   const entry = catalogEntry(it.type);
   const style = entry?.style ?? 'base';
   (BUILDERS[style] ?? BUILDERS.base)(view, g, it, entry?.look ?? {});
+  mergeByMaterial(g);
   g.userData.itemId = it.id;
   return g;
 }
