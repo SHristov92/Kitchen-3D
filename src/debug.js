@@ -60,6 +60,7 @@ export function startDebugOverlay({ view, editor }) {
       `3D rebuild: ${ms('rebuild3d')} ms (${rate('rebuild3d')}/s)   2D draw: ${ms('draw2d')} ms (${rate('draw2d')}/s)`,
       `GPU context lost: ${lost}x   failIfMajorPerformanceCaveat test: ${caveat}`,
       `long tasks: ${longTasks} (${(longMs / 1000).toFixed(1)} s total)`,
+      `page: ${location.protocol}//${location.host}   secure context: ${window.isSecureContext}`,
       `browser: ${navigator.userAgent}`,
     ].join('\n');
     prev = Object.fromEntries(Object.entries(stats).map(([k, v]) => [k, v.count]));

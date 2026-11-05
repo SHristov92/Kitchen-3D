@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kitchen 3D Planner</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='10' width='26' height='18' rx='2' fill='%232f7cf6'/%3E%3Crect x='3' y='4' width='26' height='5' rx='1' fill='%2390b8fb'/%3E%3C/svg%3E" />
+    <script>
+      // The custom domain also answers on plain http; browsers treat that as an insecure
+      // page (and may withhold features), so always move to https.
+      if (location.protocol === 'http:' && !/^(localhost|127\.|\[::1\]|192\.168\.|10\.)/.test(location.hostname)) {
+        location.replace('https://' + location.host + location.pathname + location.search + location.hash);
+      }
+    </script>
   </head>
   <body>
     <header class="topbar">
