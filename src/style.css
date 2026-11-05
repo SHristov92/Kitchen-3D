@@ -196,6 +196,17 @@ h4 { font-size: 13px; margin: 14px 0 6px; }
 .lib-name { font-size: 12px; line-height: 1.2; }
 .lib-size { font-size: 11px; color: var(--muted); }
 
+/* Ad slot at the bottom of the library (see src/ads.js). */
+.ad-wrap { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; }
+.ad-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 4px; }
+.ad-slot { max-width: 100%; overflow: hidden; }
+.ad-placeholder {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); font-size: 12px;
+  background: repeating-linear-gradient(45deg, transparent 0 8px, color-mix(in srgb, var(--border) 35%, transparent) 8px 9px);
+}
+.ad-size { font-size: 11px; opacity: 0.8; }
+
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .pane-bar {
   display: flex;

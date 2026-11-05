@@ -36,6 +36,22 @@ npm test         # unit tests (geometry, snapping, project files)
 npm run build    # static build in dist/, works from any folder or static host
 ```
 
+## Ad slot (Google AdSense)
+
+The bottom of the object library has a 250 × 250 ad slot. Until it is set up it shows a
+neutral "Ad space" placeholder and loads nothing from Google. To turn it on, create a
+fixed-size 250 × 250 display ad unit in AdSense and fill in `ADSENSE` in `src/ads.js`:
+
+```js
+export const ADSENSE = {
+  client: 'ca-pub-1234567890123456', // publisher ID
+  slot: '1234567890',                // ad unit ID
+};
+```
+
+AdSense also needs the site approved and an `ads.txt` at the domain root, which a GitHub
+Pages project site (`username.github.io/Kitchen-3D`) cannot serve on its own.
+
 ## Controls
 
 | Where | Action |

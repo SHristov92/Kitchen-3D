@@ -1,3 +1,4 @@
+import { renderAdSlot } from './ads.js';
 import { CATALOG, CATEGORIES, catalogEntry, matchesSearch } from './catalog.js';
 import { h, numberField, fmt } from './dom.js';
 import { DRAG_MIME, formatLen } from './editor2d.js';
@@ -120,7 +121,7 @@ export function renderLibraryPanel(root, editor) {
   search.addEventListener('input', draw);
   root.replaceChildren(
     h('p', { class: 'muted small' }, 'Click an object to add it to the plan, or drag it to a spot. Objects near a wall snap against it and line up with their neighbours. Doors and windows snap into the wall.'),
-    search, chips, list,
+    search, chips, list, renderAdSlot(),
   );
   drawChips();
   draw();
